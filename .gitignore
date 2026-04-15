@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+
+# Raggit eval runs
+.raggit/
+
+# IDE
+.idea/
+.vscode/
+
+# Misc
+*.spec
+RAGGIT_SPECS.md

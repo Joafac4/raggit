@@ -1,0 +1,32 @@
+[project]
+name = "raggit"
+version = "0.1.0"
+description = "Version control for your RAG pipeline — compare embedding models on your own data"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pydantic",
+    "rich",
+]
+
+[project.optional-dependencies]
+openai = ["openai"]
+huggingface = ["sentence-transformers"]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/raggit"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "tests/",
+    "examples/",
+    "RAGGIT_SPECS.md",
+    ".raggit/",
+    ".idea/",
+]
+
