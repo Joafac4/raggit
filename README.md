@@ -61,7 +61,7 @@ model_b = SentenceTransformer("all-mpnet-base-v2")
 embedder_a = Embedder("all-MiniLM-L6-v2", lambda t: model_a.encode(t).tolist())
 embedder_b = Embedder("all-mpnet-base-v2", lambda t: model_b.encode(t).tolist())
 
-run = RaggitEval(pairs=pairs).compare(model_a, model_b)
+run = RaggitEval(pairs=pairs).compare(embedder_a, embedder_b)
 run.report.show()
 
 RaggitStore().save_run(run)
