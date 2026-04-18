@@ -30,6 +30,11 @@ exclude = [
     ".idea/",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+
 [project.urls]
 Homepage = "https://github.com/Joafac4/raggit"
 Repository = "https://github.com/Joafac4/raggit"
