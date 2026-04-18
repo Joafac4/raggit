@@ -1,113 +1,176 @@
 import math
+
 import pytest
 
-from raggit import Embedder, EmbeddingPair, RaggitEval
+from raggit import EvalSuite, EmbeddingEval, SearchEval, Embedder, Metrics
+from raggit.evaluation.engine import Evaluation
 
 
-def _make_embedder(name: str, vectors: dict) -> Embedder:
-    return Embedder(name, embed_fn=lambda text: vectors[text])
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def make_embedder(name: str, vecs: dict) -> Embedder:
+    return Embedder(name, embed_fn=lambda text: vecs[text])
 
 
-def _cosine(a, b):
-    dot = sum(x * y for x, y in zip(a, b))
-    return dot / (math.sqrt(sum(x**2 for x in a)) * math.sqrt(sum(y**2 for y in b)))
+CORPUS = ["doc about cats", "doc about dogs", "doc about birds"]
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-PAIRS = [
-    EmbeddingPair(query="hello", relevant_doc="world"),
-    EmbeddingPair(query="foo", relevant_doc="bar"),
-]
-
-# model_a: high similarity for both pairs
-VECTORS_A = {
-    "hello": [1.0, 0.0],
-    "world": [0.95, 0.05],
-    "foo":   [0.0, 1.0],
-    "bar":   [0.05, 0.95],
+# tight clusters — expected doc always lands at rank 1
+VECS_GOOD = {
+    "cats query":      [1.0, 0.0, 0.0],
+    "doc about cats":  [0.99, 0.01, 0.0],
+    "dogs query":      [0.0, 1.0, 0.0],
+    "doc about dogs":  [0.01, 0.99, 0.0],
+    "doc about birds": [0.0, 0.0, 1.0],
 }
 
-# model_b: low similarity for both pairs (orthogonal vectors)
-VECTORS_B = {
-    "hello": [1.0, 0.0],
-    "world": [0.0, 1.0],
-    "foo":   [0.0, 1.0],
-    "bar":   [1.0, 0.0],
+# orthogonal — expected doc never ranks first
+VECS_BAD = {
+    "cats query":      [1.0, 0.0, 0.0],
+    "doc about cats":  [0.0, 1.0, 0.0],
+    "dogs query":      [0.0, 1.0, 0.0],
+    "doc about dogs":  [1.0, 0.0, 0.0],
+    "doc about birds": [0.0, 0.0, 1.0],
 }
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
+# ── EvalSuite ─────────────────────────────────────────────────────────────────
 
-def test_compare_returns_eval_run():
-    model_a = _make_embedder("model-a", VECTORS_A)
-    model_b = _make_embedder("model-b", VECTORS_B)
-    run = RaggitEval(pairs=PAIRS).compare(model_a, model_b)
-
-    assert run.model_a == "model-a"
-    assert run.model_b == "model-b"
-    assert len(run.results_a) == len(PAIRS)
-    assert len(run.results_b) == len(PAIRS)
-
-
-def test_similarity_scores_are_correct():
-    model_a = _make_embedder("model-a", VECTORS_A)
-    model_b = _make_embedder("model-b", VECTORS_B)
-    run = RaggitEval(pairs=PAIRS).compare(model_a, model_b)
-
-    expected_a0 = _cosine(VECTORS_A["hello"], VECTORS_A["world"])
-    assert abs(run.results_a[0].similarity_score - expected_a0) < 1e-9
-
-    expected_b0 = _cosine(VECTORS_B["hello"], VECTORS_B["world"])
-    assert abs(run.results_b[0].similarity_score - expected_b0) < 1e-9
+def test_suite_all_pass():
+    embedder = make_embedder("good-model", VECS_GOOD)
+    report = (
+        EvalSuite(name="all_pass")
+        .add(EmbeddingEval("cats query", "doc about cats", CORPUS, embedder, k=1))
+        .add(EmbeddingEval("dogs query", "doc about dogs", CORPUS, embedder, k=1))
+        .run()
+    )
+    assert report.total == 2
+    assert report.passed == 2
+    assert report.failed == 0
+    assert report.pass_rate == 1.0
 
 
-def test_winner_is_model_a_when_it_scores_higher_on_all_pairs():
-    model_a = _make_embedder("model-a", VECTORS_A)
-    model_b = _make_embedder("model-b", VECTORS_B)
-    run = RaggitEval(pairs=PAIRS).compare(model_a, model_b)
-
-    assert run.winner == "model-a"
-
-
-def test_winner_is_model_b_when_it_scores_higher():
-    # Swap roles: model_b vectors are closer
-    model_a = _make_embedder("model-a", VECTORS_B)
-    model_b = _make_embedder("model-b", VECTORS_A)
-    run = RaggitEval(pairs=PAIRS).compare(model_a, model_b)
-
-    assert run.winner == "model-b"
+def test_suite_all_fail():
+    embedder = make_embedder("bad-model", VECS_BAD)
+    report = (
+        EvalSuite(name="all_fail")
+        .add(EmbeddingEval("cats query", "doc about cats", CORPUS, embedder, k=1))
+        .add(EmbeddingEval("dogs query", "doc about dogs", CORPUS, embedder, k=1))
+        .run()
+    )
+    assert report.passed == 0
+    assert report.failed == 2
+    assert report.pass_rate == 0.0
 
 
-def test_tie_sets_winner_to_none():
-    # One pair each
-    single_pair = [EmbeddingPair(query="hello", relevant_doc="world")]
-    tie_vectors_a = {"hello": [1.0, 0.0], "world": [0.9, 0.1]}
-    tie_vectors_b = {"hello": [1.0, 0.0], "world": [0.9, 0.1]}
-
-    model_a = _make_embedder("model-a", tie_vectors_a)
-    model_b = _make_embedder("model-b", tie_vectors_b)
-    run = RaggitEval(pairs=single_pair).compare(model_a, model_b)
-
-    assert run.winner is None
+def test_suite_add_returns_self():
+    embedder = make_embedder("good-model", VECS_GOOD)
+    suite = EvalSuite()
+    result = suite.add(EmbeddingEval("cats query", "doc about cats", CORPUS, embedder))
+    assert result is suite
 
 
-def test_report_is_attached():
-    model_a = _make_embedder("model-a", VECTORS_A)
-    model_b = _make_embedder("model-b", VECTORS_B)
-    run = RaggitEval(pairs=PAIRS).compare(model_a, model_b)
-
-    assert run.report is not None
-    assert hasattr(run.report, "show")
+def test_suite_empty():
+    report = EvalSuite(name="empty").run()
+    assert report.total == 0
+    assert report.pass_rate == 0.0
 
 
-def test_unsupported_mode_raises():
-    model_a = _make_embedder("model-a", VECTORS_A)
-    model_b = _make_embedder("model-b", VECTORS_B)
+# ── EmbeddingEval ─────────────────────────────────────────────────────────────
 
-    with pytest.raises(NotImplementedError):
-        RaggitEval(pairs=PAIRS).compare(model_a, model_b, mode="human")
+def test_embedding_eval_hit():
+    embedder = make_embedder("good-model", VECS_GOOD)
+    result = EmbeddingEval("cats query", "doc about cats", CORPUS, embedder, k=1).run()
+    assert result.hit is True
+    assert result.rank == 1
+
+
+def test_embedding_eval_miss():
+    embedder = make_embedder("bad-model", VECS_BAD)
+    result = EmbeddingEval("cats query", "doc about cats", CORPUS, embedder, k=1).run()
+    assert result.hit is False
+
+
+def test_embedding_eval_custom_metric():
+    embedder = make_embedder("good-model", VECS_GOOD)
+    result = EmbeddingEval("cats query", "doc about cats", CORPUS, embedder, k=1, metric=Metrics.dot_product).run()
+    assert result.metric_name == "dot_product"
+
+
+def test_embedding_eval_default_name():
+    embedder = make_embedder("my-model", VECS_GOOD)
+    ev = EmbeddingEval("cats query", "doc about cats", CORPUS, embedder)
+    assert "my-model" in ev.name
+
+
+# ── SearchEval ────────────────────────────────────────────────────────────────
+
+def test_search_eval_hit():
+    result = SearchEval(
+        query="cats",
+        expected_doc="doc about cats",
+        search_fn=lambda q: ["doc about cats", "doc about dogs"],
+        k=1,
+    ).run()
+    assert result.hit is True
+    assert result.rank == 1
+    assert result.score == 1.0
+
+
+def test_search_eval_hit_within_k():
+    result = SearchEval(
+        query="dogs",
+        expected_doc="doc about dogs",
+        search_fn=lambda q: ["doc about cats", "doc about dogs", "doc about birds"],
+        k=2,
+    ).run()
+    assert result.hit is True
+    assert result.rank == 2
+
+
+def test_search_eval_miss():
+    result = SearchEval(
+        query="cats",
+        expected_doc="doc about whales",
+        search_fn=lambda q: ["doc about cats", "doc about dogs"],
+        k=2,
+    ).run()
+    assert result.hit is False
+    assert result.rank is None
+    assert result.score == 0.0
+
+
+# ── Evaluation engine ─────────────────────────────────────────────────────────
+
+def test_evaluation_raises_without_corpus():
+    with pytest.raises(ValueError, match="corpus_vecs required"):
+        Evaluation().eval([1.0], [1.0])
+
+
+def test_evaluation_rank_and_score():
+    corpus_vecs = [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]]
+    result = Evaluation(corpus_vecs=corpus_vecs).eval(
+        query_vec=[1.0, 0.0], expected_vec=[1.0, 0.0], k=1
+    )
+    assert result.hit is True
+    assert result.rank == 1
+    assert abs(result.score - 1.0) < 1e-9
+
+
+# ── Retrieval metrics ─────────────────────────────────────────────────────────
+
+def test_recall_at_k():
+    assert Evaluation.recall_at_k(True) == 1.0
+    assert Evaluation.recall_at_k(False) == 0.0
+
+
+def test_mrr():
+    assert Evaluation.mrr(1) == 1.0
+    assert abs(Evaluation.mrr(2) - 0.5) < 1e-9
+    assert Evaluation.mrr(None) == 0.0
+
+
+def test_ndcg():
+    assert abs(Evaluation.ndcg(1, k=3) - 1.0) < 1e-9
+    assert abs(Evaluation.ndcg(2, k=3) - 1 / math.log2(3)) < 1e-9
+    assert Evaluation.ndcg(4, k=3) == 0.0
+    assert Evaluation.ndcg(None, k=3) == 0.0
