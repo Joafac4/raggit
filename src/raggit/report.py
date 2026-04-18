@@ -28,41 +28,37 @@ class Report:
         run = self.run
         console = _utf8_console()
 
-        # Header info as a table with no borders — rendered inside the main table footer
         table = Table(box=box.ROUNDED, show_header=True, header_style="bold cyan", expand=False)
         table.add_column("Query", style="white", min_width=22)
-        table.add_column(f"{run.model_a[:20]}", justify="center", min_width=11)
-        table.add_column(f"{run.model_b[:20]}", justify="center", min_width=11)
+        table.add_column(f"{run.model_a[:20]}", justify="center", min_width=13)
+        table.add_column(f"{run.model_b[:20]}", justify="center", min_width=13)
 
         for ra, rb in zip(run.results_a, run.results_b):
-            a_better = ra.similarity_score > rb.similarity_score
-            b_better = rb.similarity_score > ra.similarity_score
-
-            score_a = f"[bold green]{ra.similarity_score:.2f} ✓[/bold green]" if a_better else f"{ra.similarity_score:.2f}"
-            score_b = f"[bold green]{rb.similarity_score:.2f} ✓[/bold green]" if b_better else f"{rb.similarity_score:.2f}"
-
             q = ra.query
             query_display = f'"{q[:20]}..."' if len(q) > 20 else f'"{q}"'
-            table.add_row(query_display, score_a, score_b)
 
-        wins_a = sum(
-            1 for ra, rb in zip(run.results_a, run.results_b)
-            if ra.similarity_score > rb.similarity_score
-        )
-        wins_b = sum(
-            1 for ra, rb in zip(run.results_a, run.results_b)
-            if rb.similarity_score > ra.similarity_score
-        )
+            def fmt(r) -> str:
+                score = f"{r.metric_score:.2f}"
+                rank  = f"#{r.rank}" if r.rank else "-"
+                check = " ✓" if r.hit else ""
+                style = "bold green" if r.hit else ""
+                cell  = f"{score}  {rank}{check}"
+                return f"[{style}]{cell}[/{style}]" if style else cell
+
+            table.add_row(query_display, fmt(ra), fmt(rb))
+
         total = len(run.pairs)
-        avg_a = sum(r.similarity_score for r in run.results_a) / total if total else 0.0
-        avg_b = sum(r.similarity_score for r in run.results_b) / total if total else 0.0
+        avg_a = sum(r.metric_score for r in run.results_a) / total if total else 0.0
+        avg_b = sum(r.metric_score for r in run.results_b) / total if total else 0.0
+        hits_a = sum(1 for r in run.results_a if r.hit)
+        hits_b = sum(1 for r in run.results_b if r.hit)
 
         if run.winner == run.model_a:
-            winner_str = f"[bold green]{run.model_a}[/bold green] ({wins_a}/{total} queries)"
+            winner_str = f"[bold green]{run.model_a}[/bold green]"
         elif run.winner == run.model_b:
-            winner_str = f"[bold green]{run.model_b}[/bold green] ({wins_b}/{total} queries)"
+            winner_str = f"[bold green]{run.model_b}[/bold green]"
         else:
-            winner_str = f"[yellow]Tie[/yellow]"
+            winner_str = "[yellow]Tie[/yellow]"
 
         console.print()
         console.rule("[bold]Raggit Eval Report[/bold]")
@@ -73,7 +69,7 @@ class Report:
         console.print()
         console.print(table)
         console.print()
-        console.print(f"  Winner         : {winner_str}")
-        console.print(f"  Avg similarity A: {avg_a:.3f}")
-        console.print(f"  Avg similarity B: {avg_b:.3f}")
+        console.print(f"  Winner        : {winner_str}")
+        console.print(f"  Avg score  A  : {avg_a:.3f}  |  hits: {hits_a}/{total}")
+        console.print(f"  Avg score  B  : {avg_b:.3f}  |  hits: {hits_b}/{total}")
         console.rule()

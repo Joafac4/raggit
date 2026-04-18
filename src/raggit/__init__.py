@@ -1,5 +1,18 @@
 from .embedder import Embedder
-from .evaluator import RaggitEval
-from .models import EmbeddingPair, EvalResult, EvalRun
+from .evaluation import BaseEval, Evaluation, EvalSuite, EmbeddingEval, SearchEval
+from .metrics import Metrics
+from .models import EmbeddingPair, EvalSingleResult, SuiteEvalResult, SuiteReport
 
-__all__ = ["Embedder", "RaggitEval", "EmbeddingPair", "EvalResult", "EvalRun"]
+__all__ = [
+    "BaseEval",
+    "Embedder",
+    "EmbeddingEval",
+    "EvalSuite",
+    "Evaluation",
+    "EvalSingleResult",
+    "EmbeddingPair",
+    "Metrics",
+    "SearchEval",
+    "SuiteEvalResult",
+    "SuiteReport",
+]

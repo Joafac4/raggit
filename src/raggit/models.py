@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,7 +17,9 @@ class EvalResult(BaseModel):
     model_name: str
     query: str
     relevant_doc: str
-    similarity_score: float
+    metric_score: float
+    hit: bool
+    rank: Optional[int]
     human_preference: Optional[bool] = None
     timestamp: datetime
 
@@ -35,3 +37,30 @@ class EvalRun(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     # Attached after construction by the evaluator; excluded from serialization
     report: Optional[Any] = Field(default=None, exclude=True)
+
+
+class EvalSingleResult(BaseModel):
+    hit: bool
+    rank: Optional[int]
+    score: float
+    k: int
+    metric_name: str
+
+
+class SuiteEvalResult(BaseModel):
+    eval_name: str
+    result: EvalSingleResult
+
+
+class SuiteReport(BaseModel):
+    suite_name: str
+    results: List[SuiteEvalResult]
+    total: int
+    passed: int
+    failed: int
+    pass_rate: float
+    created_at: datetime = Field(default_factory=datetime.now)
+
+    def show(self) -> None:
+        from .evaluation.report import show as _show  # lazy to avoid circular import
+        _show(self)
