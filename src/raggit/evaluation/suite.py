@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, List
 
-from .models import EvalSingleResult, SuiteEvalResult, SuiteReport
+from ..models import EvalSingleResult, SuiteEvalResult, SuiteReport
 
 
 class EvalSuite:

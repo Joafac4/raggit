@@ -217,3 +217,5 @@ def test_ndcg():
     assert abs(Metrics.ndcg(2, k=3) - 1 / math.log2(3)) < 1e-9
     assert Metrics.ndcg(4, k=3) == 0.0
     assert Metrics.ndcg(None, k=3) == 0.0
+
+

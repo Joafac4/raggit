@@ -237,16 +237,15 @@ All evals operate on pre-computed `list[float]` vectors — bring your own embed
 ```
 src/raggit/
 ├── __init__.py
-├── metrics.py        similarity + retrieval metrics
-├── models.py         Pydantic data models
-├── suite.py          EvalSuite orchestrator
-├── fns/
-│   ├── chunk.py      chunk_eval factory
-│   ├── embedding.py  embedding_eval factory
-│   └── index.py      index_eval factory
-└── evaluation/
-    ├── corpus.py     Corpus (holds pre-computed vectors)
-    └── report.py     Rich terminal output
+├── metrics.py           similarity + retrieval metrics
+├── models.py            Pydantic data models
+├── evaluation/
+│   ├── suite.py         EvalSuite orchestrator
+│   └── report.py        Rich terminal output
+└── fns/
+    ├── chunk.py         chunk_eval factory
+    ├── embedding.py     embedding_eval factory
+    └── index.py         index_eval factory
 ```
 
 ---
@@ -259,6 +258,7 @@ src/raggit/
 - [x] `EvalSuite` — orchestrate multiple evals, pass rate, Rich report
 - [x] Custom metrics (`cosine_similarity`, `dot_product`, `euclidean_similarity`)
 - [x] Retrieval metrics (`recall_at_k`, `mrr`, `ndcg`)
+- [ ] Suite aggregator — compare pass rates across multiple suites (e.g. model A vs model B)
 - [ ] Monitor — track eval results over time, detect regressions
 - [ ] Human-in-the-loop mode
 - [ ] CI/CD integration
