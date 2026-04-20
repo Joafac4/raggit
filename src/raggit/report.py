@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 if TYPE_CHECKING:
-    from ..models import SuiteReport
+    from .models import SuiteReport
 
 
 def _utf8_console() -> Console:

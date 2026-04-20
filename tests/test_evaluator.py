@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from raggit import Corpus, Embedder, EvalSuite, Metrics, chunk_eval, embedding_eval, index_eval
+from raggit import EvalSuite, Metrics, chunk_eval, embedding_eval, index_eval
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -63,14 +63,6 @@ def test_suite_empty():
     report = EvalSuite(name="empty").run()
     assert report.total == 0
     assert report.pass_rate == 0.0
-
-
-# ── Corpus ────────────────────────────────────────────────────────────────────
-
-def test_corpus_pre_computes_vecs():
-    embedder = Embedder("identity", lambda v: v)
-    corpus = Corpus(VECS_GOOD, embedder)
-    assert len(corpus.vecs) == len(VECS_GOOD)
 
 
 # ── embedding_eval ────────────────────────────────────────────────────────────

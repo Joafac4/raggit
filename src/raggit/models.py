@@ -29,5 +29,5 @@ class SuiteReport(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
     def show(self) -> None:
-        from .evaluation.report import show as _show  # lazy to avoid circular import
+        from .report import show as _show  # lazy to avoid circular import
         _show(self)
