@@ -120,6 +120,7 @@ EmbeddingEval(
 
 ### SearchEval
 Tests any search function — keyword, BM25, hybrid, or external APIs. No embeddings required.
+`search_fn` receives a query string and must return a ranked `list[str]` of documents.
 
 ```python
 SearchEval(
@@ -128,6 +129,45 @@ SearchEval(
     search_fn=my_search_fn,   # Callable[[str], List[str]]
     k=3,
 )
+```
+
+**Faiss example:**
+```python
+import faiss
+import numpy as np
+
+index = faiss.IndexFlatL2(dim)
+index.add(np.array(corpus_vecs, dtype="float32"))
+
+def faiss_search(query: str) -> list[str]:
+    vec = np.array([embedder.embed(query)], dtype="float32")
+    _, indices = index.search(vec, k=10)
+    return [corpus_docs[i] for i in indices[0]]
+
+SearchEval("how to activate?", "To activate your account...", faiss_search, k=3)
+```
+
+**Chroma example:**
+```python
+import chromadb
+
+client = chromadb.Client()
+collection = client.create_collection("docs")
+collection.add(documents=corpus_docs, ids=[str(i) for i in range(len(corpus_docs))])
+
+def chroma_search(query: str) -> list[str]:
+    results = collection.query(query_texts=[query], n_results=10)
+    return results["documents"][0]
+
+SearchEval("how to activate?", "To activate your account...", chroma_search, k=3)
+```
+
+**Comparing backends in the same suite:**
+```python
+EvalSuite(name="backend_comparison")
+    .add(SearchEval("how to activate?", expected_doc, faiss_search,  name="faiss"))
+    .add(SearchEval("how to activate?", expected_doc, chroma_search, name="chroma"))
+    .run()
 ```
 
 ### Custom evals
@@ -187,7 +227,7 @@ src/raggit/
 ├── store.py             local JSON persistence
 ├── evaluation/
 │   ├── base.py          BaseEval abstract class
-│   ├── engine.py        core vector ranking + retrieval metrics
+│   ├── corpus.py        Corpus (pre-computes embeddings)
 │   ├── suite.py         EvalSuite orchestrator
 │   ├── report.py        Rich terminal output
 │   └── evals/
