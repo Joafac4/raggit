@@ -1,8 +1,4 @@
-import math
-
-import pytest
-
-from raggit import EvalSuite, Metrics, chunk_eval, embedding_eval, index_eval
+from raggit import EvalSuite, Metrics, RetrievalMetrics, chunk_eval, embedding_eval, index_eval
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -199,23 +195,65 @@ def test_chunk_eval_default_overlap():
     assert received == [0.0]
 
 
-# ── Retrieval metrics ─────────────────────────────────────────────────────────
+# ── SuiteReport.aggregate ────────────────────────────────────────────────────
+
+def test_aggregate_mrr():
+    report = (
+        EvalSuite()
+        .add("cats", embedding_eval(QUERY_CATS, EXPECTED_CATS, VECS_GOOD, k=1))
+        .add("dogs", embedding_eval(QUERY_DOGS, EXPECTED_DOGS, VECS_GOOD, k=1))
+        .run()
+        .aggregate(RetrievalMetrics.mrr, name="avg_mrr")
+    )
+    assert len(report.aggregations) == 1
+    assert report.aggregations[0].name == "avg_mrr"
+    assert report.aggregations[0].value == 1.0  # both rank=1
+
+
+def test_aggregate_multiple():
+    report = (
+        EvalSuite()
+        .add("cats", embedding_eval(QUERY_CATS, EXPECTED_CATS, VECS_GOOD, k=1))
+        .run()
+        .aggregate(RetrievalMetrics.mrr,         name="avg_mrr")
+        .aggregate(RetrievalMetrics.recall_at_k, name="avg_recall")
+        .aggregate(RetrievalMetrics.ndcg,        name="avg_ndcg")
+    )
+    assert len(report.aggregations) == 3
+
+
+def test_aggregate_returns_new_report():
+    report = EvalSuite().add("cats", embedding_eval(QUERY_CATS, EXPECTED_CATS, VECS_GOOD)).run()
+    new_report = report.aggregate(RetrievalMetrics.mrr, name="mrr")
+    assert new_report is not report
+    assert len(report.aggregations) == 0  # original unchanged
+
+
+def test_aggregate_empty_suite():
+    report = EvalSuite().run().aggregate(RetrievalMetrics.mrr, name="mrr")
+    assert report.aggregations[0].value == 0.0
+
+
+# ── RetrievalMetrics ──────────────────────────────────────────────────────────
 
 def test_recall_at_k():
-    assert Metrics.recall_at_k(True) == 1.0
-    assert Metrics.recall_at_k(False) == 0.0
+    assert RetrievalMetrics.recall_at_k(1) == 1.0
+    assert RetrievalMetrics.recall_at_k(None) == 0.0
 
 
 def test_mrr():
-    assert Metrics.mrr(1) == 1.0
-    assert abs(Metrics.mrr(2) - 0.5) < 1e-9
-    assert Metrics.mrr(None) == 0.0
+    assert RetrievalMetrics.mrr(1) == 1.0
+    assert abs(RetrievalMetrics.mrr(2) - 0.5) < 1e-9
+    assert RetrievalMetrics.mrr(None) == 0.0
 
 
 def test_ndcg():
-    assert abs(Metrics.ndcg(1, k=3) - 1.0) < 1e-9
-    assert abs(Metrics.ndcg(2, k=3) - 1 / math.log2(3)) < 1e-9
-    assert Metrics.ndcg(4, k=3) == 0.0
-    assert Metrics.ndcg(None, k=3) == 0.0
+    import math
+    assert abs(RetrievalMetrics.ndcg(1, k=3) - 1.0) < 1e-9
+    assert abs(RetrievalMetrics.ndcg(2, k=3) - 1 / math.log2(3)) < 1e-9
+    assert RetrievalMetrics.ndcg(4, k=3) == 0.0
+    assert RetrievalMetrics.ndcg(None, k=3) == 0.0
+
+
 
 

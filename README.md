@@ -202,21 +202,37 @@ report = EvalSuite().add("custom", my_eval).run()
 
 ## Metrics
 
-Built-in metrics available via `Metrics`:
+**`Metrics`** — similarity metrics, passed as `metric=` to `embedding_eval` for ranking:
 
-| Metric | Description |
+| | Description |
 |---|---|
-| `cosine_similarity` | Default. Angle between vectors — best for normalized embeddings |
-| `dot_product` | Raw dot product — fast, good for unit vectors |
-| `euclidean_similarity` | `1 / (1 + distance)` — closer vectors score higher |
+| `Metrics.cosine_similarity` | Default. Angle between vectors — best for normalized embeddings |
+| `Metrics.dot_product` | Raw dot product — fast, good for unit vectors |
+| `Metrics.euclidean_similarity` | `1 / (1 + distance)` — closer vectors score higher |
 
-Retrieval metrics:
+**`RetrievalMetrics`** — post-run aggregation, passed to `SuiteReport.aggregate()`:
 
-| Metric | Description |
+| | Description |
 |---|---|
-| `recall_at_k(hit)` | 1.0 if hit else 0.0 |
-| `mrr(rank)` | Mean Reciprocal Rank — `1/rank`, 0.0 if not found |
-| `ndcg(rank, k)` | Normalized Discounted Cumulative Gain |
+| `RetrievalMetrics.recall_at_k` | 1.0 if found, 0.0 if not |
+| `RetrievalMetrics.mrr` | Mean Reciprocal Rank — `1/rank` |
+| `RetrievalMetrics.ndcg` | Normalized Discounted Cumulative Gain (default `k=10`) |
+
+Aggregations are computed on the report after running — optional and chainable:
+
+```python
+report = (
+    EvalSuite()
+    .add("cats", embedding_eval(..., metric=Metrics.cosine_similarity))
+    .run()
+    .aggregate(RetrievalMetrics.mrr,         name="avg_mrr")
+    .aggregate(RetrievalMetrics.recall_at_k, name="avg_recall")
+    .aggregate(RetrievalMetrics.ndcg,        name="avg_ndcg")           # default k=10
+    .aggregate(lambda r: RetrievalMetrics.ndcg(r, k=3), name="ndcg@3") # custom k
+)
+```
+
+Aggregations appear in `report.show()` and `report.aggregations`.
 
 ---
 
@@ -259,7 +275,7 @@ src/raggit/
 - [x] `chunk_eval` — chunking strategy coverage, with configurable overlap
 - [x] `EvalSuite` — orchestrate multiple evals, pass rate, Rich report
 - [x] Custom metrics (`cosine_similarity`, `dot_product`, `euclidean_similarity`)
-- [x] Retrieval metrics (`recall_at_k`, `mrr`, `ndcg`)
+- [x] `RetrievalMetrics` — post-run aggregations (`recall_at_k`, `mrr`, `ndcg`)
 - [ ] Suite aggregator — compare pass rates across multiple suites (e.g. model A vs model B)
 - [ ] Monitor — track eval results over time, detect regressions
 - [ ] Human-in-the-loop mode

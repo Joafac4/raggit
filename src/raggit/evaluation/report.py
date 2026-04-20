@@ -47,4 +47,9 @@ def show(report: SuiteReport) -> None:
         f"Failed: [red]{report.failed}[/red]  |  "
         f"Pass rate: {report.pass_rate * 100:.1f}%"
     )
+    if report.aggregations:
+        console.print()
+        console.print("  Aggregations:")
+        for agg in report.aggregations:
+            console.print(f"    {agg.name:<16}: {agg.value:.3f}")
     console.rule()

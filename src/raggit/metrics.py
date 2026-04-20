@@ -3,19 +3,19 @@ from __future__ import annotations
 import math
 from typing import Callable, Dict, List, Optional
 
-# Type alias for any metric function
+# Type alias for any similarity metric function
 _MetricFn = Callable[[List[float], List[float]], float]
 
 
 class Metrics:
+    """Similarity metrics — take two vectors. Use as metric= in embedding_eval."""
+
     def __init__(self) -> None:
         self._registry: Dict[str, _MetricFn] = {
             "cosine_similarity": self.cosine_similarity,
             "euclidean_similarity": self.euclidean_similarity,
             "dot_product": self.dot_product,
         }
-
-    # ── Similarity metrics ───────────────────────────────────────────────────
 
     @staticmethod
     def cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -34,22 +34,6 @@ class Metrics:
     def dot_product(a: List[float], b: List[float]) -> float:
         return sum(x * y for x, y in zip(a, b))
 
-    # ── Retrieval metrics ────────────────────────────────────────────────────
-
-    @staticmethod
-    def recall_at_k(hit: bool) -> float:
-        return 1.0 if hit else 0.0
-
-    @staticmethod
-    def mrr(rank: Optional[int]) -> float:
-        return 1 / rank if rank else 0.0
-
-    @staticmethod
-    def ndcg(rank: Optional[int], k: int) -> float:
-        return 1 / math.log2(rank + 1) if (rank and rank <= k) else 0.0
-
-    # ── Dispatch ─────────────────────────────────────────────────────────────
-
     def compare(self, vec_a: List[float], vec_b: List[float], metric_name: str) -> float:
         if metric_name not in self._registry:
             raise ValueError(
@@ -58,7 +42,21 @@ class Metrics:
             )
         return self._registry[metric_name](vec_a, vec_b)
 
-    # ── Extensibility ────────────────────────────────────────────────────────
-
     def register_metric(self, name: str, fn: _MetricFn) -> None:
         self._registry[name] = fn
+
+
+class RetrievalMetrics:
+    """Retrieval metrics — take a rank. Use as fn= in SuiteReport.aggregate()."""
+
+    @staticmethod
+    def recall_at_k(rank: Optional[int]) -> float:
+        return 1.0 if rank is not None else 0.0
+
+    @staticmethod
+    def mrr(rank: Optional[int]) -> float:
+        return 1 / rank if rank else 0.0
+
+    @staticmethod
+    def ndcg(rank: Optional[int], k: int = 10) -> float:
+        return 1 / math.log2(rank + 1) if (rank and rank <= k) else 0.0
