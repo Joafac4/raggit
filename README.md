@@ -21,23 +21,11 @@ Traditional benchmarks like MTEB evaluate models on generic datasets. Raggit eva
 **pip**
 ```bash
 pip install raggit
-
-# With OpenAI support
-pip install raggit[openai]
-
-# With HuggingFace support
-pip install raggit[huggingface]
 ```
 
 **uv**
 ```bash
 uv add raggit
-
-# With OpenAI support
-uv add raggit[openai]
-
-# With HuggingFace support
-uv add raggit[huggingface]
 ```
 
 ---
@@ -46,8 +34,7 @@ uv add raggit[huggingface]
 
 ```python
 from sentence_transformers import SentenceTransformer
-from raggit import Corpus, EvalSuite, EmbeddingEval, Embedder
-from raggit.store import RaggitStore
+from raggit import Corpus, EvalSuite, Embedder, embedding_eval
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 embedder = Embedder("all-MiniLM-L6-v2", lambda t: model.encode(t).tolist())
@@ -63,27 +50,26 @@ corpus = Corpus(
 
 report = (
     EvalSuite(name="my_suite")
-    .add(EmbeddingEval("How to activate my account?", corpus.docs[0], corpus))
-    .add(EmbeddingEval("When does my card expire?",   corpus.docs[1], corpus))
-    .add(EmbeddingEval("How do I reset my password?", corpus.docs[2], corpus))
+    .add("activation",  embedding_eval("How to activate my account?", "To activate your account...", corpus))
+    .add("card expiry", embedding_eval("When does my card expire?",   "Your card expires on...",     corpus))
+    .add("password",    embedding_eval("How do I reset my password?", "Visit the login page...",     corpus))
     .run()
 )
 
 report.show()
-RaggitStore().save(report)
 ```
 
 Output:
 ```
 ─────────────────────────── Raggit Eval Suite ───────────────────────────
   Suite : my_suite
-  Date  : 2026-04-18 10:30
+  Date  : 2026-04-20 10:30
 
-  Eval                              Hit    Rank   Score
+  Eval                              Passed   Rank   Score
  ──────────────────────────────────────────────────────
-  all-MiniLM-L6-v2: How to activ…   ✓      1      0.91
-  all-MiniLM-L6-v2: When does my…   ✓      1      0.87
-  all-MiniLM-L6-v2: How do I res…   ✓      2      0.83
+  activation                          ✓        1     0.91
+  card expiry                         ✓        1     0.87
+  password                            ✓        2     0.83
 
   Total: 3  |  Passed: 3  |  Failed: 0  |  Pass rate: 100.0%
 ─────────────────────────────────────────────────────────────────────────
@@ -95,37 +81,36 @@ Output:
 
 1. **Define your corpus** — the documents your retrieval system should search over.
 2. **Wrap your embedder** — pass any callable that converts text to `list[float]`.
-3. **Create evals** — each `EmbeddingEval` or `SearchEval` tests one query/expected-doc pair.
-4. **Run a suite** — `EvalSuite` orchestrates all evals and reports hit rate, rank, and score.
-5. **Persist** — `RaggitStore` saves results as JSON under `.raggit/` for tracking over time.
+3. **Create evals** — `embedding_eval` or `index_eval` returns a thunk for each query/expected-doc pair.
+4. **Run a suite** — `EvalSuite` orchestrates all evals and reports pass rate, rank, and score.
 
 ---
 
 ## Eval types
 
-### EmbeddingEval
+### embedding_eval
 Tests an embedding model's retrieval quality. Embeds the corpus and query, ranks by similarity, checks if the expected document is in the top-k results.
 
 ```python
 corpus = Corpus(docs=my_docs, embedder=embedder)
 
-EmbeddingEval(
+embedding_eval(
     query="How to activate my account?",
-    expected_doc="To activate your account...",
+    expected="To activate your account...",
     corpus=corpus,
     k=3,                               # default
     metric=Metrics.cosine_similarity,  # default
 )
 ```
 
-### SearchEval
-Tests any search function — keyword, BM25, hybrid, or external APIs. No embeddings required.
+### index_eval
+Tests any search function — keyword, BM25, Faiss, Chroma, hybrid, or external APIs. No embeddings required.
 `search_fn` receives a query string and must return a ranked `list[str]` of documents.
 
 ```python
-SearchEval(
+index_eval(
     query="How to activate my account?",
-    expected_doc="To activate your account...",
+    expected="To activate your account...",
     search_fn=my_search_fn,   # Callable[[str], List[str]]
     k=3,
 )
@@ -144,7 +129,7 @@ def faiss_search(query: str) -> list[str]:
     _, indices = index.search(vec, k=10)
     return [corpus_docs[i] for i in indices[0]]
 
-SearchEval("how to activate?", "To activate your account...", faiss_search, k=3)
+suite.add("faiss", index_eval("how to activate?", "To activate your account...", faiss_search, k=3))
 ```
 
 **Chroma example:**
@@ -159,28 +144,30 @@ def chroma_search(query: str) -> list[str]:
     results = collection.query(query_texts=[query], n_results=10)
     return results["documents"][0]
 
-SearchEval("how to activate?", "To activate your account...", chroma_search, k=3)
+suite.add("chroma", index_eval("how to activate?", "To activate your account...", chroma_search, k=3))
 ```
 
 **Comparing backends in the same suite:**
 ```python
-EvalSuite(name="backend_comparison")
-    .add(SearchEval("how to activate?", expected_doc, faiss_search,  name="faiss"))
-    .add(SearchEval("how to activate?", expected_doc, chroma_search, name="chroma"))
+report = (
+    EvalSuite(name="backend_comparison")
+    .add("faiss",  index_eval("how to activate?", expected_doc, faiss_search))
+    .add("chroma", index_eval("how to activate?", expected_doc, chroma_search))
     .run()
+)
 ```
 
 ### Custom evals
-Extend `BaseEval` to test anything that returns an `EvalSingleResult`.
+Any `Callable[[], EvalSingleResult]` works as an eval.
 
 ```python
-from raggit import BaseEval, EvalSingleResult
+from raggit import EvalSuite, EvalSingleResult
 
-class MyEval(BaseEval):
-    name = "my custom eval"
+def my_eval() -> EvalSingleResult:
+    score = run_my_custom_check()
+    return EvalSingleResult(passed=score > 0.8, score=score, metric_name="custom")
 
-    def run(self) -> EvalSingleResult:
-        ...
+report = EvalSuite().add("custom", my_eval).run()
 ```
 
 ---
@@ -195,24 +182,23 @@ Built-in metrics available via `Metrics`:
 | `dot_product` | Raw dot product — fast, good for unit vectors |
 | `euclidean_similarity` | `1 / (1 + distance)` — closer vectors score higher |
 
-Register a custom metric:
+Retrieval metrics:
 
-```python
-from raggit import Metrics
-
-m = Metrics()
-m.register_metric("my_metric", lambda a, b: ...)
-```
+| Metric | Description |
+|---|---|
+| `recall_at_k(hit)` | 1.0 if hit else 0.0 |
+| `mrr(rank)` | Mean Reciprocal Rank — `1/rank`, 0.0 if not found |
+| `ndcg(rank, k)` | Normalized Discounted Cumulative Gain |
 
 ---
 
 ## Supported embedder backends
 
-| Backend | Install extra | Example model |
-|---|---|---|
-| OpenAI | `raggit[openai]` | `text-embedding-3-large` |
-| HuggingFace | `raggit[huggingface]` | `all-MiniLM-L6-v2` |
-| Cohere, Ollama, custom | _(none)_ | Any `fn(str) -> list[float]` |
+| Backend | Example |
+|---|---|
+| OpenAI | `lambda t: client.embeddings.create(input=t, model="text-embedding-3-large").data[0].embedding` |
+| HuggingFace | `lambda t: SentenceTransformer("all-MiniLM-L6-v2").encode(t).tolist()` |
+| Cohere, Ollama, custom | Any `fn(str) -> list[float]` |
 
 ---
 
@@ -221,30 +207,27 @@ m.register_metric("my_metric", lambda a, b: ...)
 ```
 src/raggit/
 ├── __init__.py
-├── embedder.py          model-agnostic embedding wrapper
-├── metrics.py           similarity metrics + custom registry
-├── models.py            Pydantic data models
-├── store.py             local JSON persistence
-├── evaluation/
-│   ├── base.py          BaseEval abstract class
-│   ├── corpus.py        Corpus (pre-computes embeddings)
-│   ├── suite.py         EvalSuite orchestrator
-│   ├── report.py        Rich terminal output
-│   └── evals/
-│       ├── embedding.py EmbeddingEval
-│       └── search.py    SearchEval
-└── monitor/             coming soon
+├── embedder.py       model-agnostic embedding wrapper
+├── metrics.py        similarity + retrieval metrics
+├── models.py         Pydantic data models
+├── suite.py          EvalSuite orchestrator
+├── fns/
+│   ├── embedding.py  embedding_eval factory
+│   └── index.py      index_eval factory
+└── evaluation/
+    ├── corpus.py     Corpus (pre-computes embeddings once)
+    └── report.py     Rich terminal output
 ```
 
 ---
 
 ## Roadmap
 
-- [x] `EmbeddingEval` — embedding model retrieval quality
-- [x] `SearchEval` — search function retrieval quality
+- [x] `embedding_eval` — embedding model retrieval quality
+- [x] `index_eval` — search function retrieval quality (Faiss, Chroma, BM25, ...)
 - [x] `EvalSuite` — orchestrate multiple evals, pass rate, Rich report
-- [x] Custom metrics registry
-- [x] Local persistence with `RaggitStore`
+- [x] Custom metrics (`cosine_similarity`, `dot_product`, `euclidean_similarity`)
+- [x] Retrieval metrics (`recall_at_k`, `mrr`, `ndcg`)
 - [ ] Monitor — track eval results over time, detect regressions
 - [ ] Human-in-the-loop mode
 - [ ] CI/CD integration
