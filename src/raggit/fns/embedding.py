@@ -22,7 +22,7 @@ def embedding_eval(
     (text, audio, image, video, etc.).
 
     Usage:
-        corpus_vecs = [embedder.embed(doc) for doc in docs]
+        corpus_vecs = [embed(doc) for doc in docs]
 
         suite.add("activate", embedding_eval(embed("How to activate?"), embed("To activate..."), corpus_vecs))
         suite.add("reset",    embedding_eval(embed("Reset password"),   embed("Visit login..."), corpus_vecs))
