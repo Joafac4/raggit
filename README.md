@@ -46,23 +46,26 @@ uv add raggit[huggingface]
 
 ```python
 from sentence_transformers import SentenceTransformer
-from raggit import EvalSuite, EmbeddingEval, Embedder
+from raggit import Corpus, EvalSuite, EmbeddingEval, Embedder
 from raggit.store import RaggitStore
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 embedder = Embedder("all-MiniLM-L6-v2", lambda t: model.encode(t).tolist())
 
-corpus = [
-    "To activate your account, click the link in the email.",
-    "Your card expires on the date printed on the front.",
-    "Visit the login page to reset your password.",
-]
+corpus = Corpus(
+    docs=[
+        "To activate your account, click the link in the email.",
+        "Your card expires on the date printed on the front.",
+        "Visit the login page to reset your password.",
+    ],
+    embedder=embedder,
+)
 
 report = (
     EvalSuite(name="my_suite")
-    .add(EmbeddingEval("How to activate my account?", corpus[0], corpus, embedder))
-    .add(EmbeddingEval("When does my card expire?",   corpus[1], corpus, embedder))
-    .add(EmbeddingEval("How do I reset my password?", corpus[2], corpus, embedder))
+    .add(EmbeddingEval("How to activate my account?", corpus.docs[0], corpus))
+    .add(EmbeddingEval("When does my card expire?",   corpus.docs[1], corpus))
+    .add(EmbeddingEval("How do I reset my password?", corpus.docs[2], corpus))
     .run()
 )
 
@@ -104,12 +107,13 @@ Output:
 Tests an embedding model's retrieval quality. Embeds the corpus and query, ranks by similarity, checks if the expected document is in the top-k results.
 
 ```python
+corpus = Corpus(docs=my_docs, embedder=embedder)
+
 EmbeddingEval(
     query="How to activate my account?",
     expected_doc="To activate your account...",
-    corpus=my_corpus,
-    embedder=embedder,
-    k=3,                           # default
+    corpus=corpus,
+    k=3,                               # default
     metric=Metrics.cosine_similarity,  # default
 )
 ```

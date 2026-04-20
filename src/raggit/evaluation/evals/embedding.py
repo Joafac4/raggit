@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from typing import List
-
 from ..base import BaseEval
+from ..corpus import Corpus
 from ..engine import Evaluation, _MetricFn
-from ...embedder import Embedder
 from ...metrics import Metrics
 from ...models import EvalSingleResult
 
@@ -14,8 +12,7 @@ class EmbeddingEval(BaseEval):
         self,
         query: str,
         expected_doc: str,
-        corpus: List[str],
-        embedder: Embedder,
+        corpus: Corpus,
         k: int = 3,
         metric: _MetricFn = Metrics.cosine_similarity,
         name: str = "",
@@ -23,17 +20,15 @@ class EmbeddingEval(BaseEval):
         self.query = query
         self.expected_doc = expected_doc
         self.corpus = corpus
-        self.embedder = embedder
         self.k = k
         self.metric = metric
-        self.name = name or f"{embedder.model_name}: {query[:40]}"
+        self.name = name or f"{corpus.embedder.model_name}: {query[:40]}"
 
     def run(self) -> EvalSingleResult:
-        corpus_vecs = [self.embedder.embed(doc) for doc in self.corpus]
-        query_vec = self.embedder.embed(self.query)
-        expected_vec = self.embedder.embed(self.expected_doc)
+        query_vec = self.corpus.embedder.embed(self.query)
+        expected_vec = self.corpus.embedder.embed(self.expected_doc)
 
-        return Evaluation(corpus_vecs=corpus_vecs).eval(
+        return Evaluation(corpus_vecs=self.corpus.vecs).eval(
             query_vec=query_vec,
             expected_vec=expected_vec,
             k=self.k,

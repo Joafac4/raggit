@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from raggit import EvalSuite, EmbeddingEval, SearchEval, Embedder, Metrics
+from raggit import Corpus, EvalSuite, EmbeddingEval, SearchEval, Embedder, Metrics
 from raggit.evaluation.engine import Evaluation
 
 
@@ -12,7 +12,7 @@ def make_embedder(name: str, vecs: dict) -> Embedder:
     return Embedder(name, embed_fn=lambda text: vecs[text])
 
 
-CORPUS = ["doc about cats", "doc about dogs", "doc about birds"]
+CORPUS_DOCS = ["doc about cats", "doc about dogs", "doc about birds"]
 
 # tight clusters — expected doc always lands at rank 1
 VECS_GOOD = {
@@ -36,11 +36,11 @@ VECS_BAD = {
 # ── EvalSuite ─────────────────────────────────────────────────────────────────
 
 def test_suite_all_pass():
-    embedder = make_embedder("good-model", VECS_GOOD)
+    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
     report = (
         EvalSuite(name="all_pass")
-        .add(EmbeddingEval("cats query", "doc about cats", CORPUS, embedder, k=1))
-        .add(EmbeddingEval("dogs query", "doc about dogs", CORPUS, embedder, k=1))
+        .add(EmbeddingEval("cats query", "doc about cats", corpus, k=1))
+        .add(EmbeddingEval("dogs query", "doc about dogs", corpus, k=1))
         .run()
     )
     assert report.total == 2
@@ -50,11 +50,11 @@ def test_suite_all_pass():
 
 
 def test_suite_all_fail():
-    embedder = make_embedder("bad-model", VECS_BAD)
+    corpus = Corpus(CORPUS_DOCS, make_embedder("bad-model", VECS_BAD))
     report = (
         EvalSuite(name="all_fail")
-        .add(EmbeddingEval("cats query", "doc about cats", CORPUS, embedder, k=1))
-        .add(EmbeddingEval("dogs query", "doc about dogs", CORPUS, embedder, k=1))
+        .add(EmbeddingEval("cats query", "doc about cats", corpus, k=1))
+        .add(EmbeddingEval("dogs query", "doc about dogs", corpus, k=1))
         .run()
     )
     assert report.passed == 0
@@ -63,9 +63,9 @@ def test_suite_all_fail():
 
 
 def test_suite_add_returns_self():
-    embedder = make_embedder("good-model", VECS_GOOD)
+    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
     suite = EvalSuite()
-    result = suite.add(EmbeddingEval("cats query", "doc about cats", CORPUS, embedder))
+    result = suite.add(EmbeddingEval("cats query", "doc about cats", corpus))
     assert result is suite
 
 
@@ -75,30 +75,37 @@ def test_suite_empty():
     assert report.pass_rate == 0.0
 
 
+# ── Corpus ────────────────────────────────────────────────────────────────────
+
+def test_corpus_pre_computes_vecs():
+    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
+    assert len(corpus.vecs) == len(CORPUS_DOCS)
+
+
 # ── EmbeddingEval ─────────────────────────────────────────────────────────────
 
 def test_embedding_eval_hit():
-    embedder = make_embedder("good-model", VECS_GOOD)
-    result = EmbeddingEval("cats query", "doc about cats", CORPUS, embedder, k=1).run()
+    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
+    result = EmbeddingEval("cats query", "doc about cats", corpus, k=1).run()
     assert result.hit is True
     assert result.rank == 1
 
 
 def test_embedding_eval_miss():
-    embedder = make_embedder("bad-model", VECS_BAD)
-    result = EmbeddingEval("cats query", "doc about cats", CORPUS, embedder, k=1).run()
+    corpus = Corpus(CORPUS_DOCS, make_embedder("bad-model", VECS_BAD))
+    result = EmbeddingEval("cats query", "doc about cats", corpus, k=1).run()
     assert result.hit is False
 
 
 def test_embedding_eval_custom_metric():
-    embedder = make_embedder("good-model", VECS_GOOD)
-    result = EmbeddingEval("cats query", "doc about cats", CORPUS, embedder, k=1, metric=Metrics.dot_product).run()
+    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
+    result = EmbeddingEval("cats query", "doc about cats", corpus, k=1, metric=Metrics.dot_product).run()
     assert result.metric_name == "dot_product"
 
 
 def test_embedding_eval_default_name():
-    embedder = make_embedder("my-model", VECS_GOOD)
-    ev = EmbeddingEval("cats query", "doc about cats", CORPUS, embedder)
+    corpus = Corpus(CORPUS_DOCS, make_embedder("my-model", VECS_GOOD))
+    ev = EmbeddingEval("cats query", "doc about cats", corpus)
     assert "my-model" in ev.name
 
 
