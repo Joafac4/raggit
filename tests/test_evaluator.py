@@ -2,42 +2,37 @@ import math
 
 import pytest
 
-from raggit import Corpus, EvalSuite, Embedder, Metrics, embedding_eval, index_eval
+from raggit import Corpus, Embedder, EvalSuite, Metrics, chunk_eval, embedding_eval, index_eval
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Fixtures ──────────────────────────────────────────────────────────────────
 
-def make_embedder(name: str, vecs: dict) -> Embedder:
-    return Embedder(name, embed_fn=lambda text: vecs[text])
+VECS_GOOD = [
+    [1.0, 0.0, 0.0],   # cats doc
+    [0.0, 1.0, 0.0],   # dogs doc
+    [0.0, 0.0, 1.0],   # birds doc
+]
 
+QUERY_CATS    = [0.99, 0.01, 0.0]
+QUERY_DOGS    = [0.01, 0.99, 0.0]
+EXPECTED_CATS = [1.0, 0.0, 0.0]
+EXPECTED_DOGS = [0.0, 1.0, 0.0]
 
-CORPUS_DOCS = ["doc about cats", "doc about dogs", "doc about birds"]
-
-VECS_GOOD = {
-    "cats query":      [1.0, 0.0, 0.0],
-    "doc about cats":  [0.99, 0.01, 0.0],
-    "dogs query":      [0.0, 1.0, 0.0],
-    "doc about dogs":  [0.01, 0.99, 0.0],
-    "doc about birds": [0.0, 0.0, 1.0],
-}
-
-VECS_BAD = {
-    "cats query":      [1.0, 0.0, 0.0],
-    "doc about cats":  [0.0, 1.0, 0.0],
-    "dogs query":      [0.0, 1.0, 0.0],
-    "doc about dogs":  [1.0, 0.0, 0.0],
-    "doc about birds": [0.0, 0.0, 1.0],
-}
+# "bad" corpus: all docs collapse to birds direction — expected cats/dogs not found
+VECS_BAD = [
+    [0.0, 0.0, 1.0],
+    [0.0, 0.0, 1.0],
+    [0.0, 0.0, 1.0],
+]
 
 
 # ── EvalSuite ─────────────────────────────────────────────────────────────────
 
 def test_suite_all_pass():
-    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
     report = (
         EvalSuite(name="all_pass")
-        .add("cats", embedding_eval("cats query", "doc about cats", corpus, k=1))
-        .add("dogs", embedding_eval("dogs query", "doc about dogs", corpus, k=1))
+        .add("cats", embedding_eval(QUERY_CATS, EXPECTED_CATS, VECS_GOOD, k=1))
+        .add("dogs", embedding_eval(QUERY_DOGS, EXPECTED_DOGS, VECS_GOOD, k=1))
         .run()
     )
     assert report.total == 2
@@ -47,11 +42,10 @@ def test_suite_all_pass():
 
 
 def test_suite_all_fail():
-    corpus = Corpus(CORPUS_DOCS, make_embedder("bad-model", VECS_BAD))
     report = (
         EvalSuite(name="all_fail")
-        .add("cats", embedding_eval("cats query", "doc about cats", corpus, k=1))
-        .add("dogs", embedding_eval("dogs query", "doc about dogs", corpus, k=1))
+        .add("cats", embedding_eval(QUERY_CATS, EXPECTED_CATS, VECS_BAD, k=1))
+        .add("dogs", embedding_eval(QUERY_DOGS, EXPECTED_DOGS, VECS_BAD, k=1))
         .run()
     )
     assert report.passed == 0
@@ -60,9 +54,8 @@ def test_suite_all_fail():
 
 
 def test_suite_add_returns_self():
-    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
     suite = EvalSuite()
-    result = suite.add("cats", embedding_eval("cats query", "doc about cats", corpus))
+    result = suite.add("cats", embedding_eval(QUERY_CATS, EXPECTED_CATS, VECS_GOOD))
     assert result is suite
 
 
@@ -75,34 +68,31 @@ def test_suite_empty():
 # ── Corpus ────────────────────────────────────────────────────────────────────
 
 def test_corpus_pre_computes_vecs():
-    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
-    assert len(corpus.vecs) == len(CORPUS_DOCS)
+    embedder = Embedder("identity", lambda v: v)
+    corpus = Corpus(VECS_GOOD, embedder)
+    assert len(corpus.vecs) == len(VECS_GOOD)
 
 
 # ── embedding_eval ────────────────────────────────────────────────────────────
 
 def test_embedding_eval_hit():
-    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
-    result = embedding_eval("cats query", "doc about cats", corpus, k=1)()
+    result = embedding_eval(QUERY_CATS, EXPECTED_CATS, VECS_GOOD, k=1)()
     assert result.passed is True
     assert result.rank == 1
 
 
 def test_embedding_eval_miss():
-    corpus = Corpus(CORPUS_DOCS, make_embedder("bad-model", VECS_BAD))
-    result = embedding_eval("cats query", "doc about cats", corpus, k=1)()
+    result = embedding_eval(QUERY_CATS, EXPECTED_CATS, VECS_BAD, k=1)()
     assert result.passed is False
 
 
 def test_embedding_eval_custom_metric():
-    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
-    result = embedding_eval("cats query", "doc about cats", corpus, k=1, metric=Metrics.dot_product)()
+    result = embedding_eval(QUERY_CATS, EXPECTED_CATS, VECS_GOOD, k=1, metric=Metrics.dot_product)()
     assert result.metric_name == "dot_product"
 
 
 def test_embedding_eval_returns_callable():
-    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
-    fn = embedding_eval("cats query", "doc about cats", corpus)
+    fn = embedding_eval(QUERY_CATS, EXPECTED_CATS, VECS_GOOD)
     assert callable(fn)
 
 
@@ -110,9 +100,9 @@ def test_embedding_eval_returns_callable():
 
 def test_index_eval_hit():
     result = index_eval(
-        query="cats",
-        expected="doc about cats",
-        search_fn=lambda q: ["doc about cats", "doc about dogs"],
+        query_vec=QUERY_CATS,
+        expected_vec=EXPECTED_CATS,
+        search_fn=lambda q: [EXPECTED_CATS, EXPECTED_DOGS],
         k=1,
     )()
     assert result.passed is True
@@ -122,9 +112,9 @@ def test_index_eval_hit():
 
 def test_index_eval_hit_within_k():
     result = index_eval(
-        query="dogs",
-        expected="doc about dogs",
-        search_fn=lambda q: ["doc about cats", "doc about dogs", "doc about birds"],
+        query_vec=QUERY_DOGS,
+        expected_vec=EXPECTED_DOGS,
+        search_fn=lambda q: [EXPECTED_CATS, EXPECTED_DOGS, [0.0, 0.0, 1.0]],
         k=2,
     )()
     assert result.passed is True
@@ -133,9 +123,9 @@ def test_index_eval_hit_within_k():
 
 def test_index_eval_miss():
     result = index_eval(
-        query="cats",
-        expected="doc about whales",
-        search_fn=lambda q: ["doc about cats", "doc about dogs"],
+        query_vec=QUERY_CATS,
+        expected_vec=[0.0, 0.0, 1.0],
+        search_fn=lambda q: [EXPECTED_CATS, EXPECTED_DOGS],
         k=2,
     )()
     assert result.passed is False
@@ -144,8 +134,20 @@ def test_index_eval_miss():
 
 
 def test_index_eval_returns_callable():
-    fn = index_eval("q", "doc", search_fn=lambda q: [])
+    fn = index_eval(QUERY_CATS, EXPECTED_CATS, search_fn=lambda q: [])
     assert callable(fn)
+
+
+def test_index_eval_threshold():
+    # vector close but below default threshold should miss
+    near_but_not_match = [0.9, 0.1, 0.0]  # cos_sim with EXPECTED_CATS < 0.999
+    result = index_eval(
+        query_vec=QUERY_CATS,
+        expected_vec=EXPECTED_CATS,
+        search_fn=lambda q: [near_but_not_match],
+        k=1,
+    )()
+    assert result.passed is False
 
 
 # ── custom eval_fn ────────────────────────────────────────────────────────────
@@ -159,6 +161,50 @@ def test_custom_eval_fn():
     report = EvalSuite().add("custom", my_eval).run()
     assert report.passed == 1
     assert report.results[0].result.metric_name == "custom"
+
+
+# ── chunk_eval ────────────────────────────────────────────────────────────────
+
+DOCUMENT = [[float(i), 0.0, 0.0] for i in range(10)]  # 10 "frames" as vecs
+
+def fixed_chunker(doc, overlap):
+    size = 3
+    step = max(1, int(size * (1 - overlap)))
+    return [doc[i:i + size] for i in range(0, len(doc), step)]
+
+def embed_fn(chunk):
+    # average of chunk vecs
+    n = len(chunk)
+    return [sum(v[i] for v in chunk) / n for i in range(3)] if n else [0.0, 0.0, 0.0]
+
+EXPECTED_VEC = [4.0, 0.0, 0.0]   # close to middle of document
+
+
+def test_chunk_eval_hit():
+    result = chunk_eval(DOCUMENT, EXPECTED_VEC, fixed_chunker, embed_fn, overlap=0.0, threshold=0.9)()
+    assert result.passed is True
+    assert result.rank is not None
+    assert result.metric_name == "chunk_coverage"
+
+
+def test_chunk_eval_miss():
+    result = chunk_eval(DOCUMENT, [0.0, 1.0, 0.0], fixed_chunker, embed_fn, overlap=0.0, threshold=0.9)()
+    assert result.passed is False
+    assert result.rank is None
+
+
+def test_chunk_eval_returns_callable():
+    fn = chunk_eval(DOCUMENT, EXPECTED_VEC, fixed_chunker, embed_fn)
+    assert callable(fn)
+
+
+def test_chunk_eval_default_overlap():
+    received = []
+    def recording_chunker(doc, overlap):
+        received.append(overlap)
+        return [doc]
+    chunk_eval(DOCUMENT, EXPECTED_VEC, recording_chunker, embed_fn)()
+    assert received == [0.0]
 
 
 # ── Retrieval metrics ─────────────────────────────────────────────────────────

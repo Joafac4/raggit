@@ -34,25 +34,23 @@ uv add raggit
 
 ```python
 from sentence_transformers import SentenceTransformer
-from raggit import Corpus, EvalSuite, Embedder, embedding_eval
+from raggit import EvalSuite, embedding_eval
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
-embedder = Embedder("all-MiniLM-L6-v2", lambda t: model.encode(t).tolist())
+embed = lambda t: model.encode(t).tolist()
 
-corpus = Corpus(
-    docs=[
-        "To activate your account, click the link in the email.",
-        "Your card expires on the date printed on the front.",
-        "Visit the login page to reset your password.",
-    ],
-    embedder=embedder,
-)
+docs = [
+    "To activate your account, click the link in the email.",
+    "Your card expires on the date printed on the front.",
+    "Visit the login page to reset your password.",
+]
+corpus_vecs = [embed(doc) for doc in docs]
 
 report = (
     EvalSuite(name="my_suite")
-    .add("activation",  embedding_eval("How to activate my account?", "To activate your account...", corpus))
-    .add("card expiry", embedding_eval("When does my card expire?",   "Your card expires on...",     corpus))
-    .add("password",    embedding_eval("How do I reset my password?", "Visit the login page...",     corpus))
+    .add("activation",  embedding_eval(embed("How to activate my account?"), embed(docs[0]), corpus_vecs))
+    .add("card expiry", embedding_eval(embed("When does my card expire?"),   embed(docs[1]), corpus_vecs))
+    .add("password",    embedding_eval(embed("How do I reset my password?"), embed(docs[2]), corpus_vecs))
     .run()
 )
 
@@ -89,30 +87,58 @@ Output:
 ## Eval types
 
 ### embedding_eval
-Tests an embedding model's retrieval quality. Embeds the corpus and query, ranks by similarity, checks if the expected document is in the top-k results.
+Tests an embedding model's retrieval quality. All inputs are pre-computed vectors — works with any modality (text, audio, image, video, etc.).
 
 ```python
-corpus = Corpus(docs=my_docs, embedder=embedder)
+corpus_vecs = [embed(doc) for doc in docs]
 
 embedding_eval(
-    query="How to activate my account?",
-    expected="To activate your account...",
-    corpus=corpus,
+    query_vec=embed("How to activate my account?"),
+    expected_vec=embed("To activate your account..."),
+    corpus_vecs=corpus_vecs,
     k=3,                               # default
     metric=Metrics.cosine_similarity,  # default
 )
 ```
 
+### chunk_eval
+Tests a chunking strategy. Checks whether expected content survives chunking by comparing vectors.
+Works with any modality — text, audio, video, image.
+
+`chunk_fn` receives `(document, overlap)` and returns chunks of any type.
+`embed_fn` converts each chunk to a vector for similarity comparison.
+
+```python
+def my_chunker(text: str, overlap: float) -> list[str]:
+    size = 512
+    step = max(1, int(size * (1 - overlap)))
+    return [text[i:i + size] for i in range(0, len(text), step)]
+
+report = (
+    EvalSuite(name="chunking_comparison")
+    .add("overlap=0.0",  chunk_eval(document, expected_vec, my_chunker, embed_fn, overlap=0.0))
+    .add("overlap=0.25", chunk_eval(document, expected_vec, my_chunker, embed_fn, overlap=0.25))
+    .add("overlap=0.5",  chunk_eval(document, expected_vec, my_chunker, embed_fn, overlap=0.5))
+    .run()
+)
+```
+
+- `passed`: True if any chunk has cosine similarity ≥ `threshold` (default `0.9`) with `expected_vec`
+- `rank`: index of the first matching chunk (1-indexed)
+- `score`: highest cosine similarity across all chunks
+- `metric_name`: `"chunk_coverage"`
+
 ### index_eval
-Tests any search function — keyword, BM25, Faiss, Chroma, hybrid, or external APIs. No embeddings required.
-`search_fn` receives a query string and must return a ranked `list[str]` of documents.
+Tests any search index. `search_fn` receives the query vector and returns a ranked list of vectors.
+Compatible with Faiss, Chroma, BM25, or any other backend.
 
 ```python
 index_eval(
-    query="How to activate my account?",
-    expected="To activate your account...",
-    search_fn=my_search_fn,   # Callable[[str], List[str]]
+    query_vec=embed("How to activate my account?"),
+    expected_vec=embed("To activate your account..."),
+    search_fn=my_search_fn,   # Callable[[List[float]], List[List[float]]]
     k=3,
+    threshold=0.999,          # cosine similarity to consider a match
 )
 ```
 
@@ -124,12 +150,12 @@ import numpy as np
 index = faiss.IndexFlatL2(dim)
 index.add(np.array(corpus_vecs, dtype="float32"))
 
-def faiss_search(query: str) -> list[str]:
-    vec = np.array([embedder.embed(query)], dtype="float32")
+def faiss_search(query_vec: list[float]) -> list[list[float]]:
+    vec = np.array([query_vec], dtype="float32")
     _, indices = index.search(vec, k=10)
-    return [corpus_docs[i] for i in indices[0]]
+    return [corpus_vecs[i] for i in indices[0]]
 
-suite.add("faiss", index_eval("how to activate?", "To activate your account...", faiss_search, k=3))
+suite.add("faiss", index_eval(query_vec, expected_vec, faiss_search, k=3))
 ```
 
 **Chroma example:**
@@ -138,21 +164,21 @@ import chromadb
 
 client = chromadb.Client()
 collection = client.create_collection("docs")
-collection.add(documents=corpus_docs, ids=[str(i) for i in range(len(corpus_docs))])
+collection.add(embeddings=corpus_vecs, ids=[str(i) for i in range(len(corpus_vecs))])
 
-def chroma_search(query: str) -> list[str]:
-    results = collection.query(query_texts=[query], n_results=10)
-    return results["documents"][0]
+def chroma_search(query_vec: list[float]) -> list[list[float]]:
+    results = collection.query(query_embeddings=[query_vec], n_results=10)
+    return results["embeddings"][0]
 
-suite.add("chroma", index_eval("how to activate?", "To activate your account...", chroma_search, k=3))
+suite.add("chroma", index_eval(query_vec, expected_vec, chroma_search, k=3))
 ```
 
 **Comparing backends in the same suite:**
 ```python
 report = (
     EvalSuite(name="backend_comparison")
-    .add("faiss",  index_eval("how to activate?", expected_doc, faiss_search))
-    .add("chroma", index_eval("how to activate?", expected_doc, chroma_search))
+    .add("faiss",  index_eval(query_vec, expected_vec, faiss_search))
+    .add("chroma", index_eval(query_vec, expected_vec, chroma_search))
     .run()
 )
 ```
@@ -192,13 +218,17 @@ Retrieval metrics:
 
 ---
 
-## Supported embedder backends
+## Embedder backends
 
-| Backend | Example |
+All evals operate on pre-computed `list[float]` vectors — bring your own embedder for any modality.
+
+| Modality | Example |
 |---|---|
-| OpenAI | `lambda t: client.embeddings.create(input=t, model="text-embedding-3-large").data[0].embedding` |
-| HuggingFace | `lambda t: SentenceTransformer("all-MiniLM-L6-v2").encode(t).tolist()` |
-| Cohere, Ollama, custom | Any `fn(str) -> list[float]` |
+| Text (OpenAI) | `lambda t: client.embeddings.create(input=t, model="text-embedding-3-large").data[0].embedding` |
+| Text (HuggingFace) | `lambda t: SentenceTransformer("all-MiniLM-L6-v2").encode(t).tolist()` |
+| Audio (CLAP) | `lambda audio: clap_model.get_audio_embedding(audio)` |
+| Image/Video (CLIP) | `lambda img: clip_model.encode_image(img).tolist()` |
+| Any custom | Any `fn(input) -> list[float]` |
 
 ---
 
@@ -207,15 +237,15 @@ Retrieval metrics:
 ```
 src/raggit/
 ├── __init__.py
-├── embedder.py       model-agnostic embedding wrapper
 ├── metrics.py        similarity + retrieval metrics
 ├── models.py         Pydantic data models
 ├── suite.py          EvalSuite orchestrator
 ├── fns/
+│   ├── chunk.py      chunk_eval factory
 │   ├── embedding.py  embedding_eval factory
 │   └── index.py      index_eval factory
 └── evaluation/
-    ├── corpus.py     Corpus (pre-computes embeddings once)
+    ├── corpus.py     Corpus (holds pre-computed vectors)
     └── report.py     Rich terminal output
 ```
 
@@ -225,6 +255,7 @@ src/raggit/
 
 - [x] `embedding_eval` — embedding model retrieval quality
 - [x] `index_eval` — search function retrieval quality (Faiss, Chroma, BM25, ...)
+- [x] `chunk_eval` — chunking strategy coverage, with configurable overlap
 - [x] `EvalSuite` — orchestrate multiple evals, pass rate, Rich report
 - [x] Custom metrics (`cosine_similarity`, `dot_product`, `euclidean_similarity`)
 - [x] Retrieval metrics (`recall_at_k`, `mrr`, `ndcg`)
