@@ -28,6 +28,8 @@ pip install raggit
 uv add raggit
 ```
 
+Raggit has no embedding dependencies — bring your own embedder for any modality (text, audio, image, video).
+
 ---
 
 ## Quickstart
