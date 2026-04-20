@@ -3,7 +3,6 @@ import math
 import pytest
 
 from raggit import Corpus, EvalSuite, EmbeddingEval, SearchEval, Embedder, Metrics
-from raggit.evaluation.engine import Evaluation
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -146,38 +145,21 @@ def test_search_eval_miss():
     assert result.score == 0.0
 
 
-# ── Evaluation engine ─────────────────────────────────────────────────────────
-
-def test_evaluation_raises_without_corpus():
-    with pytest.raises(ValueError, match="corpus_vecs required"):
-        Evaluation().eval([1.0], [1.0])
-
-
-def test_evaluation_rank_and_score():
-    corpus_vecs = [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]]
-    result = Evaluation(corpus_vecs=corpus_vecs).eval(
-        query_vec=[1.0, 0.0], expected_vec=[1.0, 0.0], k=1
-    )
-    assert result.hit is True
-    assert result.rank == 1
-    assert abs(result.score - 1.0) < 1e-9
-
-
 # ── Retrieval metrics ─────────────────────────────────────────────────────────
 
 def test_recall_at_k():
-    assert Evaluation.recall_at_k(True) == 1.0
-    assert Evaluation.recall_at_k(False) == 0.0
+    assert Metrics.recall_at_k(True) == 1.0
+    assert Metrics.recall_at_k(False) == 0.0
 
 
 def test_mrr():
-    assert Evaluation.mrr(1) == 1.0
-    assert abs(Evaluation.mrr(2) - 0.5) < 1e-9
-    assert Evaluation.mrr(None) == 0.0
+    assert Metrics.mrr(1) == 1.0
+    assert abs(Metrics.mrr(2) - 0.5) < 1e-9
+    assert Metrics.mrr(None) == 0.0
 
 
 def test_ndcg():
-    assert abs(Evaluation.ndcg(1, k=3) - 1.0) < 1e-9
-    assert abs(Evaluation.ndcg(2, k=3) - 1 / math.log2(3)) < 1e-9
-    assert Evaluation.ndcg(4, k=3) == 0.0
-    assert Evaluation.ndcg(None, k=3) == 0.0
+    assert abs(Metrics.ndcg(1, k=3) - 1.0) < 1e-9
+    assert abs(Metrics.ndcg(2, k=3) - 1 / math.log2(3)) < 1e-9
+    assert Metrics.ndcg(4, k=3) == 0.0
+    assert Metrics.ndcg(None, k=3) == 0.0

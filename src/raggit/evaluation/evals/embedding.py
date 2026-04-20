@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from typing import List, Optional
+
 from ..base import BaseEval
 from ..corpus import Corpus
-from ..engine import Evaluation, _MetricFn
-from ...metrics import Metrics
+from ...metrics import Metrics, _MetricFn
 from ...models import EvalSingleResult
+
+_VECTOR_MATCH_THRESHOLD = 0.999
 
 
 class EmbeddingEval(BaseEval):
@@ -28,9 +31,22 @@ class EmbeddingEval(BaseEval):
         query_vec = self.corpus.embedder.embed(self.query)
         expected_vec = self.corpus.embedder.embed(self.expected_doc)
 
-        return Evaluation(corpus_vecs=self.corpus.vecs).eval(
-            query_vec=query_vec,
-            expected_vec=expected_vec,
+        scored = [
+            (i, self.metric(query_vec, doc_vec))
+            for i, doc_vec in enumerate(self.corpus.vecs)
+        ]
+        ranked = sorted(scored, key=lambda x: x[1], reverse=True)
+
+        rank: Optional[int] = None
+        for position, (idx, _) in enumerate(ranked, start=1):
+            if Metrics.cosine_similarity(expected_vec, self.corpus.vecs[idx]) >= _VECTOR_MATCH_THRESHOLD:
+                rank = position
+                break
+
+        return EvalSingleResult(
+            hit=rank is not None and rank <= self.k,
+            rank=rank,
+            score=self.metric(query_vec, expected_vec),
             k=self.k,
-            metric=self.metric,
+            metric_name=self.metric.__name__,
         )

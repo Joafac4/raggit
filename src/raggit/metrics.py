@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import math
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
+
+# Type alias for any metric function
+_MetricFn = Callable[[List[float], List[float]], float]
 
 
 class Metrics:
     def __init__(self) -> None:
-        self._registry: Dict[str, Callable[[List[float], List[float]], float]] = {
+        self._registry: Dict[str, _MetricFn] = {
             "cosine_similarity": self.cosine_similarity,
             "euclidean_similarity": self.euclidean_similarity,
             "dot_product": self.dot_product,
         }
 
-    # ── Built-in metrics ─────────────────────────────────────────────────────
+    # ── Similarity metrics ───────────────────────────────────────────────────
 
     @staticmethod
     def cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -31,6 +34,20 @@ class Metrics:
     def dot_product(a: List[float], b: List[float]) -> float:
         return sum(x * y for x, y in zip(a, b))
 
+    # ── Retrieval metrics ────────────────────────────────────────────────────
+
+    @staticmethod
+    def recall_at_k(hit: bool) -> float:
+        return 1.0 if hit else 0.0
+
+    @staticmethod
+    def mrr(rank: Optional[int]) -> float:
+        return 1 / rank if rank else 0.0
+
+    @staticmethod
+    def ndcg(rank: Optional[int], k: int) -> float:
+        return 1 / math.log2(rank + 1) if (rank and rank <= k) else 0.0
+
     # ── Dispatch ─────────────────────────────────────────────────────────────
 
     def compare(self, vec_a: List[float], vec_b: List[float], metric_name: str) -> float:
@@ -43,5 +60,5 @@ class Metrics:
 
     # ── Extensibility ────────────────────────────────────────────────────────
 
-    def register_metric(self, name: str, fn: Callable[[List[float], List[float]], float]) -> None:
+    def register_metric(self, name: str, fn: _MetricFn) -> None:
         self._registry[name] = fn
