@@ -1,18 +1,18 @@
 from .embedder import Embedder
-from .evaluation import BaseEval, Corpus, EvalSuite, EmbeddingEval, SearchEval
+from .evaluation import Corpus
+from .fns import embedding_eval, index_eval
 from .metrics import Metrics
-from .models import EmbeddingPair, EvalSingleResult, SuiteEvalResult, SuiteReport
+from .models import EvalSingleResult, SuiteEvalResult, SuiteReport
+from .suite import EvalSuite
 
 __all__ = [
-    "BaseEval",
     "Corpus",
     "Embedder",
-    "EmbeddingEval",
-    "EvalSuite",
     "EvalSingleResult",
-    "EmbeddingPair",
+    "EvalSuite",
     "Metrics",
-    "SearchEval",
     "SuiteEvalResult",
     "SuiteReport",
+    "embedding_eval",
+    "index_eval",
 ]

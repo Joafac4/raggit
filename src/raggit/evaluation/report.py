@@ -24,16 +24,16 @@ def show(report: SuiteReport) -> None:
 
     table = Table(box=box.SIMPLE_HEAD, show_header=True, header_style="bold cyan", expand=False)
     table.add_column("Eval",  style="white", min_width=28)
-    table.add_column("Hit",   justify="center", min_width=6)
-    table.add_column("Rank",  justify="center", min_width=6)
-    table.add_column("Score", justify="center", min_width=6)
+    table.add_column("Passed", justify="center", min_width=7)
+    table.add_column("Rank",   justify="center", min_width=6)
+    table.add_column("Score",  justify="center", min_width=6)
 
     for ser in report.results:
         r = ser.result
-        hit_cell   = "[bold green]✓[/bold green]" if r.hit else "[red]✗[/red]"
-        rank_cell  = str(r.rank) if r.rank else "-"
-        score_cell = f"{r.score:.2f}"
-        table.add_row(ser.eval_name[:40], hit_cell, rank_cell, score_cell)
+        passed_cell = "[bold green]✓[/bold green]" if r.passed else "[red]✗[/red]"
+        rank_cell   = str(r.rank) if r.rank is not None else "-"
+        score_cell  = f"{r.score:.2f}" if r.score is not None else "-"
+        table.add_row(ser.name[:40], passed_cell, rank_cell, score_cell)
 
     console.print()
     console.rule("[bold]Raggit Eval Suite[/bold]")

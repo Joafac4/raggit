@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from raggit import Corpus, EvalSuite, EmbeddingEval, SearchEval, Embedder, Metrics
+from raggit import Corpus, EvalSuite, Embedder, Metrics, embedding_eval, index_eval
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -13,7 +13,6 @@ def make_embedder(name: str, vecs: dict) -> Embedder:
 
 CORPUS_DOCS = ["doc about cats", "doc about dogs", "doc about birds"]
 
-# tight clusters — expected doc always lands at rank 1
 VECS_GOOD = {
     "cats query":      [1.0, 0.0, 0.0],
     "doc about cats":  [0.99, 0.01, 0.0],
@@ -22,7 +21,6 @@ VECS_GOOD = {
     "doc about birds": [0.0, 0.0, 1.0],
 }
 
-# orthogonal — expected doc never ranks first
 VECS_BAD = {
     "cats query":      [1.0, 0.0, 0.0],
     "doc about cats":  [0.0, 1.0, 0.0],
@@ -38,8 +36,8 @@ def test_suite_all_pass():
     corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
     report = (
         EvalSuite(name="all_pass")
-        .add(EmbeddingEval("cats query", "doc about cats", corpus, k=1))
-        .add(EmbeddingEval("dogs query", "doc about dogs", corpus, k=1))
+        .add("cats", embedding_eval("cats query", "doc about cats", corpus, k=1))
+        .add("dogs", embedding_eval("dogs query", "doc about dogs", corpus, k=1))
         .run()
     )
     assert report.total == 2
@@ -52,8 +50,8 @@ def test_suite_all_fail():
     corpus = Corpus(CORPUS_DOCS, make_embedder("bad-model", VECS_BAD))
     report = (
         EvalSuite(name="all_fail")
-        .add(EmbeddingEval("cats query", "doc about cats", corpus, k=1))
-        .add(EmbeddingEval("dogs query", "doc about dogs", corpus, k=1))
+        .add("cats", embedding_eval("cats query", "doc about cats", corpus, k=1))
+        .add("dogs", embedding_eval("dogs query", "doc about dogs", corpus, k=1))
         .run()
     )
     assert report.passed == 0
@@ -64,7 +62,7 @@ def test_suite_all_fail():
 def test_suite_add_returns_self():
     corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
     suite = EvalSuite()
-    result = suite.add(EmbeddingEval("cats query", "doc about cats", corpus))
+    result = suite.add("cats", embedding_eval("cats query", "doc about cats", corpus))
     assert result is suite
 
 
@@ -81,68 +79,86 @@ def test_corpus_pre_computes_vecs():
     assert len(corpus.vecs) == len(CORPUS_DOCS)
 
 
-# ── EmbeddingEval ─────────────────────────────────────────────────────────────
+# ── embedding_eval ────────────────────────────────────────────────────────────
 
 def test_embedding_eval_hit():
     corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
-    result = EmbeddingEval("cats query", "doc about cats", corpus, k=1).run()
-    assert result.hit is True
+    result = embedding_eval("cats query", "doc about cats", corpus, k=1)()
+    assert result.passed is True
     assert result.rank == 1
 
 
 def test_embedding_eval_miss():
     corpus = Corpus(CORPUS_DOCS, make_embedder("bad-model", VECS_BAD))
-    result = EmbeddingEval("cats query", "doc about cats", corpus, k=1).run()
-    assert result.hit is False
+    result = embedding_eval("cats query", "doc about cats", corpus, k=1)()
+    assert result.passed is False
 
 
 def test_embedding_eval_custom_metric():
     corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
-    result = EmbeddingEval("cats query", "doc about cats", corpus, k=1, metric=Metrics.dot_product).run()
+    result = embedding_eval("cats query", "doc about cats", corpus, k=1, metric=Metrics.dot_product)()
     assert result.metric_name == "dot_product"
 
 
-def test_embedding_eval_default_name():
-    corpus = Corpus(CORPUS_DOCS, make_embedder("my-model", VECS_GOOD))
-    ev = EmbeddingEval("cats query", "doc about cats", corpus)
-    assert "my-model" in ev.name
+def test_embedding_eval_returns_callable():
+    corpus = Corpus(CORPUS_DOCS, make_embedder("good-model", VECS_GOOD))
+    fn = embedding_eval("cats query", "doc about cats", corpus)
+    assert callable(fn)
 
 
-# ── SearchEval ────────────────────────────────────────────────────────────────
+# ── index_eval ────────────────────────────────────────────────────────────────
 
-def test_search_eval_hit():
-    result = SearchEval(
+def test_index_eval_hit():
+    result = index_eval(
         query="cats",
-        expected_doc="doc about cats",
+        expected="doc about cats",
         search_fn=lambda q: ["doc about cats", "doc about dogs"],
         k=1,
-    ).run()
-    assert result.hit is True
+    )()
+    assert result.passed is True
     assert result.rank == 1
     assert result.score == 1.0
 
 
-def test_search_eval_hit_within_k():
-    result = SearchEval(
+def test_index_eval_hit_within_k():
+    result = index_eval(
         query="dogs",
-        expected_doc="doc about dogs",
+        expected="doc about dogs",
         search_fn=lambda q: ["doc about cats", "doc about dogs", "doc about birds"],
         k=2,
-    ).run()
-    assert result.hit is True
+    )()
+    assert result.passed is True
     assert result.rank == 2
 
 
-def test_search_eval_miss():
-    result = SearchEval(
+def test_index_eval_miss():
+    result = index_eval(
         query="cats",
-        expected_doc="doc about whales",
+        expected="doc about whales",
         search_fn=lambda q: ["doc about cats", "doc about dogs"],
         k=2,
-    ).run()
-    assert result.hit is False
+    )()
+    assert result.passed is False
     assert result.rank is None
     assert result.score == 0.0
+
+
+def test_index_eval_returns_callable():
+    fn = index_eval("q", "doc", search_fn=lambda q: [])
+    assert callable(fn)
+
+
+# ── custom eval_fn ────────────────────────────────────────────────────────────
+
+def test_custom_eval_fn():
+    from raggit import EvalSingleResult
+
+    def my_eval() -> EvalSingleResult:
+        return EvalSingleResult(passed=True, score=0.99, metric_name="custom")
+
+    report = EvalSuite().add("custom", my_eval).run()
+    assert report.passed == 1
+    assert report.results[0].result.metric_name == "custom"
 
 
 # ── Retrieval metrics ─────────────────────────────────────────────────────────
