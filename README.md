@@ -283,6 +283,10 @@ result = retrieve("How do I reset my password?")
 # Pass extra fields defined in your store schema
 result = retrieve("How do I reset my password?", _monitor_kwargs={"user_id": "abc123"})
 
+# Once you identify a high-frequency cluster, preset a response for it
+# cache.set() embeds the query and stores (vec, response) — future similar queries return it directly
+cache.set("How do I reset my password?", "To reset your password, go to Settings → Security.")
+
 # Inspect what was logged
 monitor.stats()       # total events, unique clusters, top clusters
 monitor.clusters(top=10)
