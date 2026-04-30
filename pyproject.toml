@@ -1,6 +1,6 @@
 [project]
 name = "raggit"
-version = "0.3.1"
+version = "0.4.0"
 description = "Version control for your RAG pipeline — compare embedding models on your own data"
 requires-python = ">=3.10"
 dependencies = [
