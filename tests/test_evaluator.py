@@ -1,4 +1,5 @@
 from raggit import EvalSuite, Metrics, RetrievalMetrics, chunk_eval, embedding_eval, index_eval
+from raggit.middleware import Monitor, SQLiteMonitorStore
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -253,6 +254,70 @@ def test_ndcg():
     assert abs(RetrievalMetrics.ndcg(2, k=3) - 1 / math.log2(3)) < 1e-9
     assert RetrievalMetrics.ndcg(4, k=3) == 0.0
     assert RetrievalMetrics.ndcg(None, k=3) == 0.0
+
+
+# ── EvalSuite.from_monitor ────────────────────────────────────────────────────
+
+def embed(text: str):
+    if "password" in text.lower():
+        return [1.0, 0.0, 0.0]
+    if "account" in text.lower():
+        return [0.0, 1.0, 0.0]
+    return [0.0, 0.0, 1.0]
+
+
+def test_from_monitor_builds_suite(tmp_path):
+    store = SQLiteMonitorStore(str(tmp_path / "monitor.db"))
+    monitor = Monitor(store, embed, cluster_threshold=0.9)
+
+    monitor.log("reset my password", latency_ms=10.0, retrieval_rank=3,
+                retrieval_score=0.6, retrieved_doc_ids=["doc_pw"])
+    monitor.log("activate my account", latency_ms=10.0, retrieval_rank=6,
+                retrieval_score=0.5, retrieved_doc_ids=["doc_acc"])
+
+    corpus = {
+        "doc_pw": "Click forgot password on the login page.",
+        "doc_acc": "Visit the activation link sent to your email.",
+    }
+
+    suite = EvalSuite.from_monitor(monitor=monitor, embedder=embed, corpus=corpus,
+                                   use_problematic=False, top=10)
+    assert len(suite._evals) == 2
+    report = suite.run()
+    assert report.total == 2
+
+
+def test_from_monitor_skips_clusters_without_retrieval_data(tmp_path):
+    store = SQLiteMonitorStore(str(tmp_path / "monitor.db"))
+    monitor = Monitor(store, embed, cluster_threshold=0.9)
+
+    monitor.log("reset my password", latency_ms=10.0, retrieved_doc_ids=["doc_pw"])
+    monitor.log("activate my account", latency_ms=10.0)  # no retrieved_doc_ids
+
+    corpus = {"doc_pw": "Click forgot password on the login page."}
+
+    suite = EvalSuite.from_monitor(monitor=monitor, embedder=embed, corpus=corpus,
+                                   use_problematic=False)
+    assert len(suite._evals) == 1
+
+
+def test_from_monitor_problematic_only(tmp_path):
+    store = SQLiteMonitorStore(str(tmp_path / "monitor.db"))
+    monitor = Monitor(store, embed, cluster_threshold=0.9)
+
+    monitor.log("reset my password", latency_ms=10.0, retrieval_rank=8,
+                retrieval_score=0.4, retrieved_doc_ids=["doc_pw"])
+    monitor.log("activate my account", latency_ms=10.0, retrieval_rank=1,
+                retrieval_score=0.95, retrieved_doc_ids=["doc_acc"])
+
+    corpus = {
+        "doc_pw": "Click forgot password on the login page.",
+        "doc_acc": "Visit the activation link sent to your email.",
+    }
+
+    suite = EvalSuite.from_monitor(monitor=monitor, embedder=embed, corpus=corpus,
+                                   use_problematic=True, min_rank=5, max_score=0.7)
+    assert len(suite._evals) == 1  # only the bad cluster
 
 
 

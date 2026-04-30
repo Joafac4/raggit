@@ -91,6 +91,48 @@ def test_monitor_store_stats(tmp_path):
     assert stats["unique_clusters"] == 2
 
 
+def test_monitor_store_rolling_avg_retrieval(tmp_path):
+    store = SQLiteMonitorStore(str(tmp_path / "monitor.db"))
+    store.log("reset my password", vec=[1.0, 0.0, 0.0], latency_ms=10.0, threshold=0.9,
+              retrieval_rank=2, retrieval_score=0.8)
+    store.log("how do I reset password", vec=[0.99, 0.1, 0.0], latency_ms=10.0, threshold=0.9,
+              retrieval_rank=4, retrieval_score=0.6)
+    cluster = store.get_clusters()[0]
+    assert cluster.avg_retrieval_rank == 3.0   # (2 + 4) / 2
+    assert cluster.avg_retrieval_score == 0.7  # (0.8 + 0.6) / 2
+
+
+def test_monitor_store_get_events(tmp_path):
+    store = SQLiteMonitorStore(str(tmp_path / "monitor.db"))
+    store.log("reset my password", vec=[1.0, 0.0, 0.0], latency_ms=10.0, threshold=0.9,
+              retrieval_rank=1, retrieved_doc_ids=["doc1", "doc2"])
+    store.log("activate account", vec=[0.0, 1.0, 0.0], latency_ms=10.0, threshold=0.9)
+    events = store.get_events()
+    assert len(events) == 2
+
+
+def test_monitor_store_get_events_filter_retrieved_docs(tmp_path):
+    store = SQLiteMonitorStore(str(tmp_path / "monitor.db"))
+    store.log("reset my password", vec=[1.0, 0.0, 0.0], latency_ms=10.0, threshold=0.9,
+              retrieved_doc_ids=["doc1"])
+    store.log("activate account", vec=[0.0, 1.0, 0.0], latency_ms=10.0, threshold=0.9)
+    events = store.get_events(has_retrieved_docs=True)
+    assert len(events) == 1
+    assert events[0].retrieved_doc_ids == ["doc1"]
+
+
+def test_monitor_store_problematic_clusters_filter(tmp_path):
+    store = SQLiteMonitorStore(str(tmp_path / "monitor.db"))
+    store.log("bad query", vec=[1.0, 0.0, 0.0], latency_ms=10.0, threshold=0.9,
+              retrieval_rank=8, retrieval_score=0.4)
+    store.log("good query", vec=[0.0, 1.0, 0.0], latency_ms=10.0, threshold=0.9,
+              retrieval_rank=1, retrieval_score=0.95)
+    # Only the bad cluster should match: rank >= 5 AND score <= 0.7
+    clusters = store.get_clusters(min_retrieval_rank=5, max_retrieval_score=0.7)
+    assert len(clusters) == 1
+    assert clusters[0].representative_query == "bad query"
+
+
 # ── SQLiteClusterStore ────────────────────────────────────────────────────────
 
 def test_cluster_store_merges_similar_queries(tmp_path):

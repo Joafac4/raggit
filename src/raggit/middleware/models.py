@@ -14,6 +14,8 @@ class Cluster(BaseModel):
     count: int = 0
     created_at: datetime = Field(default_factory=datetime.now)
     last_seen: datetime = Field(default_factory=datetime.now)
+    avg_retrieval_rank: Optional[float] = None
+    avg_retrieval_score: Optional[float] = None
 
 
 class Event(BaseModel):
@@ -23,3 +25,7 @@ class Event(BaseModel):
     latency_ms: Optional[float] = None
     timestamp: datetime = Field(default_factory=datetime.now)
     cache_hit: bool = False
+    retrieval_rank: Optional[int] = None
+    retrieval_score: Optional[float] = None
+    retrieved_doc_ids: Optional[List[str]] = None
+    user_feedback: Optional[bool] = None
