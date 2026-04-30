@@ -271,7 +271,7 @@ cache = SemanticCache(
     threshold=0.95,
 )
 
-middleware = Middleware(monitor=monitor, cache=cache)
+middleware = Middleware(monitor=monitor, cache=cache, embedder=embed)
 
 @middleware.track
 def retrieve(query: str) -> str:

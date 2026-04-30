@@ -16,8 +16,9 @@ class SemanticCache:
         self.embedder = embedder
         self.threshold = threshold
 
-    def get(self, query: str) -> Optional[str]:
-        vec = self.embedder(query)
+    def get(self, query: str, vec: Optional[List[float]] = None) -> Optional[str]:
+        if vec is None:
+            vec = self.embedder(query)
         return self.store.get(vec, self.threshold)
 
     def set(self, cluster_id: str, response: str, approved_by: str = "llm") -> None:

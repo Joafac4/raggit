@@ -25,10 +25,12 @@ class Monitor:
         query: str,
         latency_ms: float,
         cache_hit: bool = False,
+        vec: Optional[List[float]] = None,
         **kwargs,
     ) -> None:
         self._validate(kwargs)
-        vec = self.embedder(query)
+        if vec is None:
+            vec = self.embedder(query)
         self.store.log(
             query=query,
             vec=vec,

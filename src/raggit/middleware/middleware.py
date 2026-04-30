@@ -17,10 +17,12 @@ class Middleware:
         self,
         monitor: Optional[Monitor] = None,
         cache: Optional[SemanticCache] = None,
+        embedder: Optional[Callable] = None,
         monitor_workers: int = 2,
     ):
         self.monitor = monitor
         self.cache = cache
+        self.embedder = embedder
         self._executor = ThreadPoolExecutor(max_workers=monitor_workers) if monitor else None
 
     def track(self, fn: Callable) -> Callable:
@@ -33,16 +35,17 @@ class Middleware:
     def _execute(self, query: str, fn: Callable, *args, monitor_kwargs: dict = None, **kwargs):
         """Pipeline: cache → fn → monitor. Add future steps here."""
         monitor_kwargs = monitor_kwargs or {}
+        vec = self.embedder(query) if self.embedder else None
 
-        cached = self.cache.get(query) if self.cache else None
+        cached = self.cache.get(query, vec=vec) if self.cache else None
         if cached is not None:
-            self._log_monitor(query, latency_ms=0.0, cache_hit=True, **monitor_kwargs)
+            self._log_monitor(query, latency_ms=0.0, cache_hit=True, vec=vec, **monitor_kwargs)
             return cached
 
         start = time.time()
         result = fn(query, *args, **kwargs)
 
-        self._log_monitor(query, latency_ms=Monitor.calculate_timing(start), **monitor_kwargs)
+        self._log_monitor(query, latency_ms=Monitor.calculate_timing(start), vec=vec, **monitor_kwargs)
         return result
 
     def _log_monitor(self, query: str, **kwargs) -> None:
