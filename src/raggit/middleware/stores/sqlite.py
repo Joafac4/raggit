@@ -45,7 +45,7 @@ def _row_to_cluster(row) -> Cluster:
 
 def _best_match(conn, table: str, vec: List[float], threshold: float) -> Optional[str]:
     """Return cluster_id of most similar vector above threshold, or None."""
-    rows = conn.execute(f"SELECT cluster_id, vec FROM {table}").fetchall()
+    rows = conn.execute(f"SELECT cluster_id, representative_vec FROM {table}").fetchall()
     best_id, best_score = None, -1.0
     for cluster_id, vec_json in rows:
         score = Metrics.cosine_similarity(vec, json.loads(vec_json))
