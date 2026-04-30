@@ -250,6 +250,88 @@ All evals operate on pre-computed `list[float]` vectors — bring your own embed
 
 ---
 
+## Middleware
+
+The middleware layer wraps your RAG retrieval function with a semantic cache and a query monitor — both optional and independent.
+
+```python
+from raggit.middleware import Middleware, Monitor, SemanticCache, SQLiteMonitorStore, SQLiteCacheStore
+
+embed = lambda t: model.encode(t).tolist()
+
+monitor = Monitor(
+    store=SQLiteMonitorStore(".raggit/monitor.db"),
+    embedder=embed,
+    cluster_threshold=0.92,   # queries this similar share a cluster
+)
+
+cache = SemanticCache(
+    store=SQLiteCacheStore(".raggit/cache.db"),
+    embedder=embed,
+    threshold=0.95,
+)
+
+middleware = Middleware(monitor=monitor, cache=cache)
+
+@middleware.track
+def retrieve(query: str) -> str:
+    return my_rag_pipeline(query)
+
+# Cache hit returns instantly; monitor logs asynchronously in both cases
+result = retrieve("How do I reset my password?")
+
+# Pass extra fields defined in your store schema
+result = retrieve("How do I reset my password?", _monitor_kwargs={"user_id": "abc123"})
+
+# Inspect what was logged
+monitor.stats()       # total events, unique clusters, top clusters
+monitor.clusters(top=10)
+
+# On app exit
+middleware.shutdown()
+```
+
+### Store types
+
+| Store | Tables | Use when |
+|---|---|---|
+| `SQLiteMonitorStore` | `clusters` + `events` | Full per-query history |
+| `SQLiteClusterStore` | `clusters` only | Aggregate counts, no history |
+| `SQLiteCacheStore` | `cache` | Semantic cache |
+
+All SQLite stores accept the same `path=` argument and can share a file.
+
+### Extra monitor fields
+
+Add columns to your `events` table, then pass them via `_monitor_kwargs`:
+
+```sql
+ALTER TABLE events ADD COLUMN user_id TEXT;
+```
+
+```python
+retrieve("my query", _monitor_kwargs={"user_id": "abc123"})
+```
+
+`Monitor` validates field names and types against the store schema at log time.
+
+### Custom stores
+
+Implement `MonitorStore` or `CacheStore` to use any backend (Postgres, DynamoDB, etc.):
+
+```python
+from raggit.middleware import MonitorStore
+
+class MyDynamoStore(MonitorStore):
+    def get_schema(self) -> dict[str, type]:
+        return {"user_id": str, "session_id": str}
+
+    def log(self, query, vec, latency_ms, threshold, cache_hit=False, **kwargs):
+        ...  # write to DynamoDB
+```
+
+---
+
 ## Project structure
 
 ```
@@ -260,10 +342,20 @@ src/raggit/
 ├── evaluation/
 │   ├── suite.py         EvalSuite orchestrator
 │   └── report.py        Rich terminal output
-└── fns/
-    ├── chunk.py         chunk_eval factory
-    ├── embedding.py     embedding_eval factory
-    └── index.py         index_eval factory
+├── fns/
+│   ├── chunk.py         chunk_eval factory
+│   ├── embedding.py     embedding_eval factory
+│   └── index.py         index_eval factory
+└── middleware/
+    ├── middleware.py     Middleware orchestrator (cache → monitor pipeline)
+    ├── models.py         Cluster, Event models
+    ├── cache/
+    │   └── cache.py      SemanticCache
+    ├── monitor/
+    │   └── monitor.py    Monitor (clustering, validation, timing)
+    └── stores/
+        ├── base.py       MonitorStore, CacheStore ABCs
+        └── sqlite.py     SQLiteMonitorStore, SQLiteClusterStore, SQLiteCacheStore
 ```
 
 ---
@@ -277,6 +369,6 @@ src/raggit/
 - [x] Custom metrics (`cosine_similarity`, `dot_product`, `euclidean_similarity`)
 - [x] `RetrievalMetrics` — post-run aggregations (`recall_at_k`, `mrr`, `ndcg`)
 - [ ] Suite aggregator — compare pass rates across multiple suites (e.g. model A vs model B)
-- [ ] Monitor — track eval results over time, detect regressions
+- [x] Middleware — semantic cache + query monitor with pluggable stores
 - [ ] Human-in-the-loop mode
 - [ ] CI/CD integration
