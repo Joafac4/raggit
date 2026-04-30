@@ -293,9 +293,9 @@ class SQLiteCacheStore(CacheStore):
             ).fetchone()
         return row[0] if row else None
 
-    def set(self, cluster_id: str, response: str, approved_by: str = "llm") -> None:
+    def set(self, vec: List[float], response: str, approved_by: str = "llm") -> None:
         with sqlite3.connect(self.path) as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO cache (cache_id, vec, response, approved_by, created_at) VALUES (?, ?, ?, ?, ?)",
-                (cluster_id, "", response, approved_by, datetime.now().isoformat()),
+                "INSERT INTO cache (cache_id, vec, response, approved_by, created_at) VALUES (?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), json.dumps(vec), response, approved_by, datetime.now().isoformat()),
             )

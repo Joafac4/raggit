@@ -67,9 +67,9 @@ class CacheStore(ABC):
     @abstractmethod
     def set(
         self,
-        cluster_id: str,
+        vec: List[float],
         response: str,
         approved_by: str = "llm",
     ) -> None:
-        """Store cached response for cluster_id."""
+        """Store cached response for vec."""
         ...

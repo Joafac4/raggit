@@ -21,5 +21,6 @@ class SemanticCache:
             vec = self.embedder(query)
         return self.store.get(vec, self.threshold)
 
-    def set(self, cluster_id: str, response: str, approved_by: str = "llm") -> None:
-        self.store.set(cluster_id, response, approved_by)
+    def set(self, query: str, response: str, approved_by: str = "llm") -> None:
+        vec = self.embedder(query)
+        self.store.set(vec, response, approved_by)
