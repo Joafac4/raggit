@@ -185,6 +185,43 @@ def test_evaluate_empty_ranked_list():
     assert result.score == 0.0
 
 
+def test_evaluate_custom_match_metric():
+    result = evaluate(
+        [EXPECTED_DOGS, EXPECTED_CATS],
+        EXPECTED_CATS,
+        k=3,
+        match_metric=Metrics.dot_product,
+        threshold=0.99,
+    )
+    assert result.passed is True
+    assert result.rank == 2
+
+
+def test_evaluate_match_fn_for_id_based_retrieval():
+    # Non-vector retrieval — match by id equality
+    result = evaluate(
+        ranked_items=["doc_b", "doc_a", "doc_c"],
+        expected_item="doc_a",
+        k=3,
+        match_fn=lambda a, b: a == b,
+    )
+    assert result.passed is True
+    assert result.rank == 2
+    assert result.score == 1.0  # match_fn provided, score defaults to 1.0 when matched
+
+
+def test_evaluate_match_fn_miss_score_zero():
+    result = evaluate(
+        ranked_items=["doc_b", "doc_c"],
+        expected_item="doc_a",
+        k=3,
+        match_fn=lambda a, b: a == b,
+    )
+    assert result.passed is False
+    assert result.rank is None
+    assert result.score == 0.0
+
+
 # ── custom eval_fn ────────────────────────────────────────────────────────────
 
 def test_custom_eval_fn():

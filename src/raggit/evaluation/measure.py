@@ -1,42 +1,59 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Callable, List, Optional
 
 from ..metrics import Metrics
 from ..models import EvalSingleResult
 
 
 def evaluate(
-    ranked_vecs: List[List[float]],
-    expected_vec: List[float],
+    ranked_items: List[Any],
+    expected_item: Any,
     k: Optional[int] = 3,
     threshold: float = 0.999,
+    match_metric: Callable[[Any, Any], float] = Metrics.cosine_similarity,
+    match_fn: Optional[Callable[[Any, Any], bool]] = None,
     score: Optional[float] = None,
     metric_name: str = "retrieval",
 ) -> EvalSingleResult:
     """
-    Find the rank of expected_vec in ranked_vecs and produce an EvalSingleResult.
+    Find the rank of expected_item in ranked_items and produce an EvalSingleResult.
 
     Eval factories produce a ranked list (specific to the system being tested) and
     delegate measurement to this helper, so rank/score/passed semantics stay consistent.
 
-    If `score` is not provided, defaults to the cosine similarity of the top-ranked
-    vector to expected — useful for "how close did the system get?". Factories that
-    measure something else (e.g. embedder's intrinsic query→expected relevance) pass
-    their own `score`.
+    Matching:
+        - By default, items are matched against expected via cosine similarity ≥ threshold.
+        - Override `match_metric` to use a different similarity metric (dot_product, etc.).
+        - Override `match_fn` (item, expected) -> bool to bypass similarity entirely —
+          useful for non-vector retrieval (IDs, strings, sparse representations).
 
-    `k=None` means any positive rank passes (used by chunk_eval — any matching chunk
-    counts).
+    Scoring:
+        - If `score` is None and items are vectors, defaults to match_metric(top, expected).
+        - If `score` is None and `match_fn` is used, defaults to 1.0 if matched else 0.0.
+        - Pass `score` explicitly to override (e.g. embedder's intrinsic query→expected score).
+
+    `k=None` means any positive rank passes (used by chunk_eval — any matching chunk counts).
     """
     rank: Optional[int] = None
-    for i, vec in enumerate(ranked_vecs, start=1):
-        if Metrics.cosine_similarity(vec, expected_vec) >= threshold:
+    for i, item in enumerate(ranked_items, start=1):
+        if match_fn is not None:
+            matched = match_fn(item, expected_item)
+        else:
+            matched = match_metric(item, expected_item) >= threshold
+        if matched:
             rank = i
             break
 
     passed = rank is not None and (k is None or rank <= k)
+
     if score is None:
-        score = Metrics.cosine_similarity(ranked_vecs[0], expected_vec) if ranked_vecs else 0.0
+        if not ranked_items:
+            score = 0.0
+        elif match_fn is not None:
+            score = 1.0 if rank is not None else 0.0
+        else:
+            score = match_metric(ranked_items[0], expected_item)
 
     return EvalSingleResult(
         passed=passed,
