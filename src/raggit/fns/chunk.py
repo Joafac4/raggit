@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List
 
+from ..evaluation.measure import evaluate
 from ..metrics import Metrics
 from ..models import EvalSingleResult
 
@@ -21,27 +22,26 @@ def chunk_eval(
     embed_fn converts each chunk to a vector for similarity comparison.
     Works with any modality: text, audio, video, image, etc.
 
+    score = best chunk similarity to expected — how well the chunker preserved the
+    expected content somewhere in the document. Useful for comparing chunking strategies.
+
     Usage:
         suite.add("no-overlap",  chunk_eval(doc, expected_vec, my_chunker, embed_fn, overlap=0.0))
         suite.add("25%-overlap", chunk_eval(doc, expected_vec, my_chunker, embed_fn, overlap=0.25))
-        suite.add("50%-overlap", chunk_eval(doc, expected_vec, my_chunker, embed_fn, overlap=0.5))
     """
     def _run() -> EvalSingleResult:
         chunks = chunk_fn(document, overlap)
-
-        rank: Optional[int] = None
-        best_score = 0.0
-        for position, chunk in enumerate(chunks, start=1):
-            sim = Metrics.cosine_similarity(embed_fn(chunk), expected_vec)
-            if sim > best_score:
-                best_score = sim
-            if sim >= threshold and rank is None:
-                rank = position
-
-        return EvalSingleResult(
-            passed=rank is not None,
-            score=best_score,
-            rank=rank,
+        chunk_vecs = [embed_fn(c) for c in chunks]
+        ranked = sorted(
+            chunk_vecs,
+            key=lambda v: Metrics.cosine_similarity(v, expected_vec),
+            reverse=True,
+        )
+        return evaluate(
+            ranked,
+            expected_vec,
+            k=None,                       # any matching chunk counts as passing
+            threshold=threshold,
             metric_name="chunk_coverage",
         )
 

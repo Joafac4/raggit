@@ -1,4 +1,4 @@
-from raggit import EvalSuite, Metrics, RetrievalMetrics, chunk_eval, embedding_eval, index_eval
+from raggit import EvalSuite, Metrics, RetrievalMetrics, chunk_eval, embedding_eval, evaluate, index_eval
 from raggit.middleware import Monitor, SQLiteMonitorStore
 
 
@@ -96,7 +96,7 @@ def test_index_eval_hit():
     )()
     assert result.passed is True
     assert result.rank == 1
-    assert result.score == 1.0
+    assert result.score == 1.0  # cos_sim(top_result, expected) when top_result == expected
 
 
 def test_index_eval_hit_within_k():
@@ -137,6 +137,52 @@ def test_index_eval_threshold():
         k=1,
     )()
     assert result.passed is False
+
+
+# ── evaluate (shared measurement helper) ──────────────────────────────────────
+
+def test_evaluate_hit_at_rank_1():
+    result = evaluate([EXPECTED_CATS, EXPECTED_DOGS], EXPECTED_CATS, k=3)
+    assert result.passed is True
+    assert result.rank == 1
+    assert result.score == 1.0  # default score = cos_sim(top, expected)
+
+
+def test_evaluate_hit_at_rank_2():
+    result = evaluate([EXPECTED_DOGS, EXPECTED_CATS], EXPECTED_CATS, k=3)
+    assert result.passed is True
+    assert result.rank == 2
+
+
+def test_evaluate_miss_when_not_in_list():
+    result = evaluate([EXPECTED_DOGS, [0.0, 0.0, 1.0]], EXPECTED_CATS, k=3)
+    assert result.passed is False
+    assert result.rank is None
+
+
+def test_evaluate_fails_when_rank_exceeds_k():
+    result = evaluate([EXPECTED_DOGS, [0.0, 0.0, 1.0], EXPECTED_CATS], EXPECTED_CATS, k=2)
+    assert result.passed is False
+    assert result.rank == 3
+
+
+def test_evaluate_k_none_passes_any_match():
+    result = evaluate([EXPECTED_DOGS, [0.0, 0.0, 1.0], EXPECTED_CATS], EXPECTED_CATS, k=None)
+    assert result.passed is True
+    assert result.rank == 3
+
+
+def test_evaluate_score_override():
+    result = evaluate([EXPECTED_CATS], EXPECTED_CATS, k=3, score=0.42, metric_name="custom")
+    assert result.score == 0.42
+    assert result.metric_name == "custom"
+
+
+def test_evaluate_empty_ranked_list():
+    result = evaluate([], EXPECTED_CATS, k=3)
+    assert result.passed is False
+    assert result.rank is None
+    assert result.score == 0.0
 
 
 # ── custom eval_fn ────────────────────────────────────────────────────────────
