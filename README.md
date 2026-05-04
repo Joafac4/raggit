@@ -364,3 +364,9 @@ src/raggit/
 - [ ] Suite aggregator — compare pass rates across multiple suites (e.g. model A vs model B)
 - [ ] Feedback integration — kept out of the monitor log path on purpose; design first, then build
 - [ ] CI/CD integration
+
+---
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE).
