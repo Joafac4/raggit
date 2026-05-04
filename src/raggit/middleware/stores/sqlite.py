@@ -13,7 +13,7 @@ from .base import CacheStore, MonitorStore
 
 _INTERNAL_EVENT_COLS = frozenset({
     "event_id", "cluster_id", "query_text", "latency_ms", "timestamp", "cache_hit",
-    "retrieval_rank", "retrieval_score", "retrieved_doc_ids", "user_feedback",
+    "retrieval_score", "retrieved_doc_ids",
 })
 
 _SQLITE_TO_PYTHON: Dict[str, type] = {
@@ -32,16 +32,8 @@ def _ensure_dir(path: str) -> None:
         os.makedirs(dir_path, exist_ok=True)
 
 
-def _rolling_avg(old_avg: Optional[float], new_value: Optional[float], old_count: int) -> Optional[float]:
-    if new_value is None:
-        return old_avg
-    if old_avg is None:
-        return float(new_value)
-    return (old_avg * old_count + new_value) / (old_count + 1)
-
-
 def _row_to_cluster(row) -> Cluster:
-    cluster_id, rep_vec, rep_query, count, created_at, last_seen, avg_rank, avg_score = row
+    cluster_id, rep_vec, rep_query, count, created_at, last_seen = row
     return Cluster(
         cluster_id=cluster_id,
         representative_vec=json.loads(rep_vec),
@@ -49,14 +41,12 @@ def _row_to_cluster(row) -> Cluster:
         count=count,
         created_at=datetime.fromisoformat(created_at),
         last_seen=datetime.fromisoformat(last_seen),
-        avg_retrieval_rank=avg_rank,
-        avg_retrieval_score=avg_score,
     )
 
 
 def _row_to_event(row) -> Event:
     event_id, cluster_id, query_text, latency_ms, timestamp, cache_hit, \
-        retrieval_rank, retrieval_score, retrieved_doc_ids, user_feedback = row
+        retrieval_score, retrieved_doc_ids = row
     return Event(
         event_id=event_id,
         cluster_id=cluster_id,
@@ -64,10 +54,8 @@ def _row_to_event(row) -> Event:
         latency_ms=latency_ms,
         timestamp=datetime.fromisoformat(timestamp),
         cache_hit=bool(cache_hit),
-        retrieval_rank=retrieval_rank,
         retrieval_score=retrieval_score,
         retrieved_doc_ids=json.loads(retrieved_doc_ids) if retrieved_doc_ids else None,
-        user_feedback=bool(user_feedback) if user_feedback is not None else None,
     )
 
 
@@ -105,9 +93,7 @@ class SQLiteMonitorStore(MonitorStore):
                     representative_query TEXT NOT NULL,
                     count INTEGER DEFAULT 0,
                     created_at TEXT NOT NULL,
-                    last_seen TEXT NOT NULL,
-                    avg_retrieval_rank REAL,
-                    avg_retrieval_score REAL
+                    last_seen TEXT NOT NULL
                 )
             """)
             conn.execute("""
@@ -118,10 +104,8 @@ class SQLiteMonitorStore(MonitorStore):
                     latency_ms REAL,
                     timestamp TEXT NOT NULL,
                     cache_hit INTEGER DEFAULT 0,
-                    retrieval_rank INTEGER,
                     retrieval_score REAL,
                     retrieved_doc_ids TEXT,
-                    user_feedback INTEGER,
                     FOREIGN KEY (cluster_id) REFERENCES clusters(cluster_id)
                 )
             """)
@@ -144,50 +128,35 @@ class SQLiteMonitorStore(MonitorStore):
         cache_hit: bool = False,
         **kwargs,
     ) -> None:
-        retrieval_rank = kwargs.pop("retrieval_rank", None)
         retrieval_score = kwargs.pop("retrieval_score", None)
         retrieved_doc_ids = kwargs.pop("retrieved_doc_ids", None)
-        user_feedback = kwargs.pop("user_feedback", None)
 
         now = datetime.now().isoformat()
         with sqlite3.connect(self.path) as conn:
             cluster_id = _best_match(conn, "clusters", vec, threshold)
             if cluster_id:
-                row = conn.execute(
-                    "SELECT count, avg_retrieval_rank, avg_retrieval_score FROM clusters WHERE cluster_id = ?",
-                    (cluster_id,),
-                ).fetchone()
-                old_count, old_rank_avg, old_score_avg = row
                 conn.execute(
-                    """UPDATE clusters SET count = count + 1, last_seen = ?,
-                       avg_retrieval_rank = ?, avg_retrieval_score = ?
-                       WHERE cluster_id = ?""",
-                    (
-                        now,
-                        _rolling_avg(old_rank_avg, retrieval_rank, old_count),
-                        _rolling_avg(old_score_avg, retrieval_score, old_count),
-                        cluster_id,
-                    ),
+                    "UPDATE clusters SET count = count + 1, last_seen = ? WHERE cluster_id = ?",
+                    (now, cluster_id),
                 )
             else:
                 cluster_id = str(uuid.uuid4())
                 conn.execute(
                     """INSERT INTO clusters
                         (cluster_id, representative_vec, representative_query, count,
-                         created_at, last_seen, avg_retrieval_rank, avg_retrieval_score)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (cluster_id, json.dumps(vec), query, 1, now, now, retrieval_rank, retrieval_score),
+                         created_at, last_seen)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (cluster_id, json.dumps(vec), query, 1, now, now),
                 )
 
             base_cols = [
                 "event_id", "cluster_id", "query_text", "latency_ms", "timestamp",
-                "cache_hit", "retrieval_rank", "retrieval_score", "retrieved_doc_ids", "user_feedback",
+                "cache_hit", "retrieval_score", "retrieved_doc_ids",
             ]
             base_vals = [
                 str(uuid.uuid4()), cluster_id, query, latency_ms, now, int(cache_hit),
-                retrieval_rank, retrieval_score,
+                retrieval_score,
                 json.dumps(retrieved_doc_ids) if retrieved_doc_ids is not None else None,
-                (1 if user_feedback else 0) if user_feedback is not None else None,
             ]
             extra_cols = list(kwargs.keys())
             all_cols = base_cols + extra_cols
@@ -204,7 +173,7 @@ class SQLiteMonitorStore(MonitorStore):
         has_retrieved_docs: Optional[bool] = None,
     ) -> List[Event]:
         sql = """SELECT event_id, cluster_id, query_text, latency_ms, timestamp,
-                        cache_hit, retrieval_rank, retrieval_score, retrieved_doc_ids, user_feedback
+                        cache_hit, retrieval_score, retrieved_doc_ids
                  FROM events WHERE 1=1"""
         params: list = []
         if cluster_id is not None:
@@ -227,8 +196,6 @@ class SQLiteMonitorStore(MonitorStore):
         top: Optional[int] = None,
         since: Optional[datetime] = None,
         last_seen_before: Optional[datetime] = None,
-        min_retrieval_rank: Optional[float] = None,
-        max_retrieval_score: Optional[float] = None,
     ) -> List[Cluster]:
         sql = "SELECT * FROM clusters WHERE 1=1"
         params: list = []
@@ -238,12 +205,6 @@ class SQLiteMonitorStore(MonitorStore):
         if last_seen_before is not None:
             sql += " AND last_seen <= ?"
             params.append(last_seen_before.isoformat())
-        if min_retrieval_rank is not None:
-            sql += " AND avg_retrieval_rank >= ?"
-            params.append(min_retrieval_rank)
-        if max_retrieval_score is not None:
-            sql += " AND avg_retrieval_score <= ?"
-            params.append(max_retrieval_score)
         sql += " ORDER BY count DESC"
         if top is not None:
             sql += " LIMIT ?"
@@ -280,9 +241,7 @@ class SQLiteClusterStore(MonitorStore):
                     representative_query TEXT NOT NULL,
                     count INTEGER DEFAULT 0,
                     created_at TEXT NOT NULL,
-                    last_seen TEXT NOT NULL,
-                    avg_retrieval_rank REAL,
-                    avg_retrieval_score REAL
+                    last_seen TEXT NOT NULL
                 )
             """)
 
@@ -298,36 +257,21 @@ class SQLiteClusterStore(MonitorStore):
         cache_hit: bool = False,
         **kwargs,
     ) -> None:
-        retrieval_rank = kwargs.pop("retrieval_rank", None)
-        retrieval_score = kwargs.pop("retrieval_score", None)
-
         now = datetime.now().isoformat()
         with sqlite3.connect(self.path) as conn:
             cluster_id = _best_match(conn, "clusters", vec, threshold)
             if cluster_id:
-                row = conn.execute(
-                    "SELECT count, avg_retrieval_rank, avg_retrieval_score FROM clusters WHERE cluster_id = ?",
-                    (cluster_id,),
-                ).fetchone()
-                old_count, old_rank_avg, old_score_avg = row
                 conn.execute(
-                    """UPDATE clusters SET count = count + 1, last_seen = ?,
-                       avg_retrieval_rank = ?, avg_retrieval_score = ?
-                       WHERE cluster_id = ?""",
-                    (
-                        now,
-                        _rolling_avg(old_rank_avg, retrieval_rank, old_count),
-                        _rolling_avg(old_score_avg, retrieval_score, old_count),
-                        cluster_id,
-                    ),
+                    "UPDATE clusters SET count = count + 1, last_seen = ? WHERE cluster_id = ?",
+                    (now, cluster_id),
                 )
             else:
                 conn.execute(
                     """INSERT INTO clusters
                         (cluster_id, representative_vec, representative_query, count,
-                         created_at, last_seen, avg_retrieval_rank, avg_retrieval_score)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (str(uuid.uuid4()), json.dumps(vec), query, 1, now, now, retrieval_rank, retrieval_score),
+                         created_at, last_seen)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (str(uuid.uuid4()), json.dumps(vec), query, 1, now, now),
                 )
 
     def get_clusters(
@@ -335,8 +279,6 @@ class SQLiteClusterStore(MonitorStore):
         top: Optional[int] = None,
         since: Optional[datetime] = None,
         last_seen_before: Optional[datetime] = None,
-        min_retrieval_rank: Optional[float] = None,
-        max_retrieval_score: Optional[float] = None,
     ) -> List[Cluster]:
         sql = "SELECT * FROM clusters WHERE 1=1"
         params: list = []
@@ -346,12 +288,6 @@ class SQLiteClusterStore(MonitorStore):
         if last_seen_before is not None:
             sql += " AND last_seen <= ?"
             params.append(last_seen_before.isoformat())
-        if min_retrieval_rank is not None:
-            sql += " AND avg_retrieval_rank >= ?"
-            params.append(min_retrieval_rank)
-        if max_retrieval_score is not None:
-            sql += " AND avg_retrieval_score <= ?"
-            params.append(max_retrieval_score)
         sql += " ORDER BY count DESC"
         if top is not None:
             sql += " LIMIT ?"

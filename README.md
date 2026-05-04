@@ -2,7 +2,7 @@
 
 > You updated your embedding model and your RAG got worse — but you didn't know until users complained.
 >
-> Raggit lets you monitor retrieval quality in production, automatically surface the queries where your pipeline is failing, and run evals against them — so you always know if a model change made things better or worse on your actual data.
+> Raggit lets you see what your production traffic actually looks like, write evals against the queries that matter, and re-run them whenever you change models — so you know on your own data whether the swap helped or hurt.
 >
 > It's not a benchmark. It's version control for your RAG pipeline.
 
@@ -10,18 +10,18 @@
 
 ## The loop
 
-Most RAG failures are invisible. The pipeline runs, something gets retrieved, an answer is generated — but nobody checks if the right document was at rank 1.
+Most RAG failures are invisible. The pipeline runs, something gets retrieved, an answer is generated — but nobody checks if the model swap broke retrieval on the queries users actually send.
 
 Raggit closes the feedback loop:
 
-1. **Monitor** production queries — cluster similar ones, track retrieval rank and score per cluster
-2. **Identify** clusters where retrieval is consistently poor (`avg_rank > 5`, `avg_score < 0.7`)
-3. **Generate evals** from those clusters automatically with `EvalSuite.from_monitor()`
-4. **Run evals** when you change models — see exactly which queries improved or regressed
+1. **Monitor** production queries — cluster similar ones, log search metadata per event
+2. **Inspect** which clusters of queries are most popular and which docs are most retrieved
+3. **Write evals** against the queries you care about
+4. **Re-run** them when you change models — see exactly which queries improved or regressed
 
 ```python
 from raggit.middleware import Middleware, Monitor, SQLiteMonitorStore
-from raggit import EvalSuite
+from raggit import EvalSuite, embedding_eval
 
 embed = lambda t: model.encode(t).tolist()
 
@@ -32,39 +32,46 @@ middleware = Middleware(monitor=monitor, embedder=embed)
 @middleware.track
 def retrieve(query: str) -> str:
     docs, scores, ids = index.search(query)
-    return docs[0], _monitor_kwargs={
-        "retrieval_rank": 1,
-        "retrieval_score": scores[0],
-        "retrieved_doc_ids": ids,
-    }
+    return docs[0]
 
-# ... production traffic flows through retrieve() ...
-
-# 2. After collecting data, generate evals from clusters with poor retrieval
-corpus = {"doc1": "Reset your password via Settings.", "doc2": "Contact support at ..."}
-
-suite = EvalSuite.from_monitor(
-    monitor=monitor,
-    embedder=embed,
-    corpus=corpus,
-    use_problematic=True,   # only clusters with avg_rank > 5 or avg_score < 0.7
+# Optional: pass search-time metadata at the call site
+answer = retrieve(
+    "how do I reset my password",
+    _monitor_kwargs={
+        "retrieval_score": 0.91,         # top-1 confidence the retriever returned
+        "retrieved_doc_ids": ["doc_42"], # what came back from the index
+    },
 )
 
-# 3. Switch to a new model, run the same suite, compare
-report = suite.run()
-report.show()
+# 2. After collecting data, see what's popular
+for cluster in monitor.popular_queries(top=10):
+    print(cluster.count, cluster.representative_query)
+
+# 3. Write evals against the queries you care about
+corpus_vecs = [embed(doc) for doc in docs]
+suite = (
+    EvalSuite(name="prod_smoke")
+    .add("reset password", embedding_eval(
+        embed("how do I reset my password"),
+        embed("Reset your password via Settings."),
+        corpus_vecs,
+    ))
+)
+
+# 4. Switch to a new model, re-run, compare
+suite.run().show()
 ```
 
 ```
 ─────────────────────────── Raggit Eval Suite ───────────────────────────
-  Suite : from_monitor
+  Suite : prod_smoke
   Date  : 2026-04-30 11:42
 
   Eval                                        Passed   Rank   Score
  ────────────────────────────────────────────────────────────────────
-  how do i reset my password                    ✓        1     0.94
-  i cant log into my account                    ✗        4     0.61
-  what is the refund policy                     ✓        2     0.88
+  reset password                                ✓        1     0.94
+  log into account                              ✗        4     0.61
+  refund policy                                 ✓        2     0.88
 
   Total: 3  |  Passed: 2  |  Failed: 1  |  Pass rate: 66.7%
 ─────────────────────────────────────────────────────────────────────────
@@ -90,7 +97,7 @@ Raggit has no embedding dependencies — bring your own embedder for any modalit
 
 ## Evals
 
-Write evals manually when you know what to test. Use `from_monitor()` when you want production data to tell you what to test.
+Write evals manually against the queries you want to lock in. Use `monitor.popular_queries()` to see which clusters of queries are worth covering.
 
 ### embedding_eval
 
@@ -190,7 +197,7 @@ EvalSuite().add("custom", my_eval).run()
 
 ## Monitor
 
-The monitor wraps your retrieval function, clusters similar queries, and tracks retrieval quality per cluster. It's the data source for `from_monitor()`.
+The monitor wraps your retrieval function and clusters similar queries so you can see what production traffic actually looks like.
 
 ```python
 from raggit.middleware import Middleware, Monitor, SQLiteMonitorStore
@@ -207,17 +214,15 @@ def retrieve(query: str) -> str:
     docs, scores, ids = index.search(query)
     return docs[0]
 
-# Pass retrieval data so monitor can track quality per cluster
+# Optional: pass search-time metadata at the call site
 result = retrieve("my query", _monitor_kwargs={
-    "retrieval_rank": 1,
-    "retrieval_score": 0.91,
-    "retrieved_doc_ids": ["doc_42"],
+    "retrieval_score": 0.91,         # top-1 confidence
+    "retrieved_doc_ids": ["doc_42"], # what came back from the index
 })
 
-# Inspect clusters
+# Inspect what's popular
 monitor.stats()
-monitor.clusters(top=10)
-monitor.problematic_clusters(min_rank=5, max_score=0.7)
+monitor.popular_queries(top=10)
 ```
 
 ### Store types
@@ -326,7 +331,7 @@ src/raggit/
 ├── metrics.py           similarity + retrieval metrics
 ├── models.py            Pydantic data models
 ├── evaluation/
-│   ├── suite.py         EvalSuite orchestrator + from_monitor()
+│   ├── suite.py         EvalSuite orchestrator
 │   └── report.py        Rich terminal output
 ├── fns/
 │   ├── chunk.py         chunk_eval factory
@@ -355,7 +360,7 @@ src/raggit/
 - [x] Custom metrics (`cosine_similarity`, `dot_product`, `euclidean_similarity`)
 - [x] `RetrievalMetrics` — post-run aggregations (`recall_at_k`, `mrr`, `ndcg`)
 - [x] Middleware — semantic cache + query monitor with pluggable stores
-- [x] `EvalSuite.from_monitor()` — generate evals from production monitoring data
+- [x] `monitor.popular_queries()` — surface popular query clusters from production
 - [ ] Suite aggregator — compare pass rates across multiple suites (e.g. model A vs model B)
-- [ ] Human-in-the-loop eval approval
+- [ ] Feedback integration — kept out of the monitor log path on purpose; design first, then build
 - [ ] CI/CD integration

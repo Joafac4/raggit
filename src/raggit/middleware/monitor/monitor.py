@@ -7,7 +7,7 @@ from typing import Callable, Dict, List, Optional
 from ..models import Cluster
 from ..stores.base import MonitorStore
 
-_RETRIEVAL_FIELDS = frozenset({"retrieval_rank", "retrieval_score", "retrieved_doc_ids", "user_feedback"})
+_BUILTIN_FIELDS = frozenset({"retrieval_score", "retrieved_doc_ids"})
 
 
 class Monitor:
@@ -43,7 +43,7 @@ class Monitor:
         )
 
     def _validate(self, kwargs: dict) -> None:
-        user_kwargs = {k: v for k, v in kwargs.items() if k not in _RETRIEVAL_FIELDS}
+        user_kwargs = {k: v for k, v in kwargs.items() if k not in _BUILTIN_FIELDS}
         unknown = set(user_kwargs) - set(self._schema)
         if unknown:
             raise ValueError(
@@ -60,25 +60,13 @@ class Monitor:
     def calculate_timing(start: float) -> float:
         return (time.time() - start) * 1000
 
-    def clusters(
+    def popular_queries(
         self,
         top: Optional[int] = None,
         since: Optional[datetime] = None,
         last_seen_before: Optional[datetime] = None,
     ) -> List[Cluster]:
         return self.store.get_clusters(top=top, since=since, last_seen_before=last_seen_before)
-
-    def problematic_clusters(
-        self,
-        min_rank: float = 5.0,
-        max_score: float = 0.7,
-        top: Optional[int] = None,
-    ) -> List[Cluster]:
-        return self.store.get_clusters(
-            min_retrieval_rank=min_rank,
-            max_retrieval_score=max_score,
-            top=top,
-        )
 
     def events(
         self,
