@@ -7,25 +7,20 @@ No API key required — models are downloaded from HuggingFace on first run.
 
 from sentence_transformers import SentenceTransformer
 
-from raggit import Embedder, EmbeddingPair, RaggitEval
-from raggit.store import RaggitStore
+from raggit import EvalSuite, RetrievalMetrics, embedding_eval
 
-# ── 1. Define your query/document pairs ─────────────────────────────────────
+# ── 1. Define your query / expected-doc pairs ───────────────────────────────
 
 pairs = [
-    EmbeddingPair(
-        query="How do I activate my account?",
-        relevant_doc="To activate your account, click the link in the confirmation email.",
-    ),
-    EmbeddingPair(
-        query="When does my card expire?",
-        relevant_doc="Your card expiry date is printed on the front of the card.",
-    ),
-    EmbeddingPair(
-        query="How do I reset my password?",
-        relevant_doc="Visit the login page and click 'Forgot password' to reset it.",
-    ),
+    ("How do I activate my account?",
+     "To activate your account, click the link in the confirmation email."),
+    ("When does my card expire?",
+     "Your card expiry date is printed on the front of the card."),
+    ("How do I reset my password?",
+     "Visit the login page and click 'Forgot password' to reset it."),
 ]
+
+corpus = [doc for _, doc in pairs]
 
 # ── 2. Load two sentence-transformers models ─────────────────────────────────
 
@@ -33,24 +28,21 @@ print("Loading models...")
 st_minilm = SentenceTransformer("all-MiniLM-L6-v2")
 st_mpnet  = SentenceTransformer("all-mpnet-base-v2")
 
-model_a = Embedder("all-MiniLM-L6-v2",   embed_fn=lambda t: st_minilm.encode(t).tolist())
-model_b = Embedder("all-mpnet-base-v2",   embed_fn=lambda t: st_mpnet.encode(t).tolist())
+# ── 3. Build a suite per model and compare ──────────────────────────────────
 
-# ── 3. Run the evaluation ────────────────────────────────────────────────────
+def run_suite(name, encode):
+    embed = lambda t: encode(t).tolist()
+    corpus_vecs = [embed(doc) for doc in corpus]
 
-run = RaggitEval(pairs=pairs).compare(model_a, model_b, mode="auto")
+    suite = EvalSuite(name=name)
+    for query, expected in pairs:
+        suite.add(query, embedding_eval(embed(query), embed(expected), corpus_vecs, k=1))
 
-# ── 4. Show the report ───────────────────────────────────────────────────────
+    (suite.run()
+     .aggregate(RetrievalMetrics.mrr,         name="avg_mrr")
+     .aggregate(RetrievalMetrics.recall_at_k, name="avg_recall")
+     .show())
 
-run.report.show()
 
-# ── 5. Persist the result ────────────────────────────────────────────────────
-
-store = RaggitStore()
-store.save_run(run)
-print(f"\nRun saved: {run.run_id}")
-
-# ── 6. Inspect history ───────────────────────────────────────────────────────
-
-all_runs = store.list_runs()
-print(f"Total runs stored: {len(all_runs)}")
+run_suite("all-MiniLM-L6-v2",  st_minilm.encode)
+run_suite("all-mpnet-base-v2", st_mpnet.encode)
