@@ -4,7 +4,7 @@
 >
 > Raggit lets you see what your production traffic actually looks like, write evals against the queries that matter, and re-run them whenever you change models — so you know on your own data whether the swap helped or hurt.
 >
-> It's not a benchmark. It's version control for your RAG pipeline.
+> It's not a benchmark — it's evals against the queries your users actually send.
 
 ---
 
@@ -17,7 +17,7 @@ Raggit closes the feedback loop:
 1. **Monitor** production queries — cluster similar ones, log search metadata per event
 2. **Inspect** which clusters of queries are most popular and which docs are most retrieved
 3. **Write evals** against the queries you care about
-4. **Re-run** them when you change models — see exactly which queries improved or regressed
+4. **Re-run** them when you change models — compare reports side-by-side on the queries you care about
 
 ```python
 from raggit.middleware import Middleware, Monitor, SQLiteMonitorStore
@@ -361,7 +361,7 @@ src/raggit/
 - [x] `RetrievalMetrics` — post-run aggregations (`recall_at_k`, `mrr`, `ndcg`)
 - [x] Middleware — semantic cache + query monitor with pluggable stores
 - [x] `monitor.popular_queries()` — surface popular query clusters from production
-- [ ] Suite aggregator — compare pass rates across multiple suites (e.g. model A vs model B)
+- [ ] Suite history & diff — persist `SuiteReport`s and diff across runs (e.g. model A vs model B over time)
 - [ ] Feedback integration — kept out of the monitor log path on purpose; design first, then build
 - [ ] CI/CD integration
 
