@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Optional
 
 from .cache.cache import SemanticCache
+from .models import RetrievalHandle
 from .monitor.monitor import Monitor
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,31 @@ class Middleware:
             return self._execute(query, fn, *args, monitor_kwargs=monitor_kwargs, **kwargs)
         return wrapper
 
+    def track_with_handle(self, fn: Callable) -> Callable:
+        """
+        Like track, but returns a RetrievalHandle instead of the plain answer.
+
+        The handle carries cluster_id (always set) and event_id (set only when
+        the underlying store keeps per-event history) so the caller can wire
+        the answer to a feedback UI and later call monitor.record_feedback.
+
+        Requires both a monitor and an embedder. Clustering runs synchronously
+        so the IDs are populated before this returns; the event row is still
+        written asynchronously.
+        """
+        if self.monitor is None:
+            raise ValueError("track_with_handle requires a monitor")
+        if self.embedder is None:
+            raise ValueError("track_with_handle requires an embedder")
+
+        @functools.wraps(fn)
+        def wrapper(query: str, *args, **kwargs) -> RetrievalHandle:
+            monitor_kwargs = kwargs.pop("_monitor_kwargs", {})
+            return self._execute_with_handle(
+                query, fn, *args, monitor_kwargs=monitor_kwargs, **kwargs
+            )
+        return wrapper
+
     def _execute(self, query: str, fn: Callable, *args, monitor_kwargs: dict = None, **kwargs):
         """Pipeline: cache → fn → monitor. Add future steps here."""
         monitor_kwargs = monitor_kwargs or {}
@@ -47,6 +73,46 @@ class Middleware:
 
         self._log_monitor(query, latency_ms=Monitor.calculate_timing(start), vec=vec, **monitor_kwargs)
         return result
+
+    def _execute_with_handle(
+        self,
+        query: str,
+        fn: Callable,
+        *args,
+        monitor_kwargs: dict = None,
+        **kwargs,
+    ) -> RetrievalHandle:
+        monitor_kwargs = monitor_kwargs or {}
+
+        # Sync: cluster the query so cluster_id (and event_id, if applicable)
+        # are known before we return.
+        cluster_id, event_id, vec = self.monitor.assign_cluster(query)
+
+        cached = self.cache.get(query, vec=vec) if self.cache else None
+        if cached is not None:
+            self._log_monitor(
+                query,
+                latency_ms=0.0,
+                cache_hit=True,
+                vec=vec,
+                cluster_id=cluster_id,
+                event_id=event_id,
+                **monitor_kwargs,
+            )
+            return RetrievalHandle(answer=cached, cluster_id=cluster_id, event_id=event_id)
+
+        start = time.time()
+        answer = fn(query, *args, **kwargs)
+
+        self._log_monitor(
+            query,
+            latency_ms=Monitor.calculate_timing(start),
+            vec=vec,
+            cluster_id=cluster_id,
+            event_id=event_id,
+            **monitor_kwargs,
+        )
+        return RetrievalHandle(answer=answer, cluster_id=cluster_id, event_id=event_id)
 
     def _log_monitor(self, query: str, **kwargs) -> None:
         if self.monitor is None:

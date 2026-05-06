@@ -1,10 +1,25 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel, Field
+
+
+@dataclass
+class RetrievalHandle:
+    """Returned by Middleware.track_with_handle. Carries the IDs needed to
+    record feedback against the retrieval that produced `answer`.
+
+    `cluster_id` is always populated. `event_id` is only set when the store
+    keeps per-event history (e.g. SQLiteMonitorStore); for aggregate-only
+    stores like SQLiteClusterStore it is None.
+    """
+    answer: Any
+    cluster_id: str
+    event_id: Optional[str] = None
 
 
 class Cluster(BaseModel):

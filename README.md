@@ -272,8 +272,102 @@ class MyDynamoStore(MonitorStore):
     def get_schema(self) -> dict[str, type]:
         return {"user_id": str}
 
-    def log(self, query, vec, latency_ms, threshold, cache_hit=False, **kwargs):
-        ...  # write to DynamoDB
+    def assign_cluster(self, vec, threshold, query) -> str:
+        ...  # find or create cluster, bump count, return cluster_id
+
+    def log(self, query, vec, latency_ms, threshold, cache_hit=False,
+            cluster_id=None, event_id=None, **kwargs):
+        ...  # write to DynamoDB; if cluster_id is given, skip clustering
+```
+
+---
+
+## Feedback
+
+Once you're collecting production queries, the next signal you want is whether
+the answers were any good. Feedback lets users (or your own code) record
+thumbs-up/down or a numeric score against a specific retrieval, so you can see
+which clusters of queries have low acceptance — i.e. which ones are worth
+writing evals against next.
+
+Feedback persistence is a separate concern from monitor persistence. You pair
+a `MonitorStore` with a matching `FeedbackStore` at the `Monitor` layer:
+
+```python
+from raggit.middleware import (
+    Middleware, Monitor, SQLiteMonitorStore, SQLiteEventFeedbackStore,
+)
+
+# Both stores typically share the same DB file.
+db = ".raggit/monitor.db"
+monitor = Monitor(
+    store=SQLiteMonitorStore(db),
+    feedback_store=SQLiteEventFeedbackStore(db),
+    embedder=embed,
+)
+mw = Middleware(monitor=monitor, embedder=embed)
+
+# Use track_with_handle instead of track when you want feedback later.
+@mw.track_with_handle
+def retrieve(query: str) -> str:
+    return my_index.search(query)[0]
+
+handle = retrieve("how do I reset my password")
+print(handle.answer)         # the answer your users see
+print(handle.cluster_id)     # always set
+print(handle.event_id)       # set when the store keeps event history
+
+# Later, when the user clicks 👍 / 👎 / leaves a star rating:
+monitor.record_feedback(handle, accepted=True)                  # thumb-only
+monitor.record_feedback(handle, score=0.8)                      # rating-only
+monitor.record_feedback(handle, accepted=True, score=0.8, comment="great")
+
+# Surface clusters with low acceptance — your priority queue for new evals
+for cluster, rate in monitor.acceptance_rate_per_cluster(top=10):
+    print(f"{rate:.0%}  {cluster.count}x  {cluster.representative_query!r}")
+
+for cluster, avg in monitor.avg_score_per_cluster(top=10):
+    print(f"{avg:.2f}  {cluster.count}x  {cluster.representative_query!r}")
+```
+
+At least one of `accepted` or `score` must be provided — calling
+`record_feedback(handle)` with no signal raises `ValueError`. Calling it
+without a `feedback_store` wired into the `Monitor` also raises a clear
+error.
+
+### Pairing tables
+
+The two `FeedbackStore` implementations match the two `MonitorStore` philosophies:
+
+| MonitorStore | Pair with | What gets stored | Comments preserved? |
+|---|---|---|---|
+| `SQLiteMonitorStore` | `SQLiteEventFeedbackStore` | Per-event rows in a `feedback` table (FK to `events`) | yes |
+| `SQLiteClusterStore` | `SQLiteClusterFeedbackStore` | Counter columns appended to the `clusters` table | dropped |
+
+`SQLiteClusterStore` was chosen for "aggregates only, no history" — its
+paired feedback store respects that. Comments are silently dropped because
+there's no row to attach them to. If you need per-event feedback or comment
+retention, use the event-flavored pair.
+
+Both feedback stores are idempotent on init and can be instantiated in any
+order relative to their paired `MonitorStore` — they share the same DB and
+each ensures its own schema exists.
+
+### Wiring feedback to your own HTTP route
+
+Raggit doesn't ship an HTTP server. Wire `record_feedback` into your existing
+framework's route handler:
+
+```python
+@app.post("/feedback")
+def feedback(req: FeedbackReq):
+    handle = handle_cache.pop(req.handle_token)  # however your app stores it
+    monitor.record_feedback(
+        handle,
+        accepted=req.accepted,
+        score=req.score,
+        comment=req.comment,
+    )
 ```
 
 ---
@@ -362,7 +456,7 @@ src/raggit/
 - [x] Middleware — semantic cache + query monitor with pluggable stores
 - [x] `monitor.popular_queries()` — surface popular query clusters from production
 - [ ] Suite history & diff — persist `SuiteReport`s and diff across runs (e.g. model A vs model B over time)
-- [ ] Feedback integration — kept out of the monitor log path on purpose; design first, then build
+- [x] Feedback integration — `track_with_handle` + `record_feedback` + acceptance/score per-cluster reads
 - [ ] CI/CD integration
 
 ---
