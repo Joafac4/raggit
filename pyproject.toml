@@ -1,6 +1,6 @@
 [project]
 name = "raggit"
-version = "0.6.2"
+version = "0.7.0"
 description = "Version control for your RAG pipeline — compare embedding models on your own data"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
