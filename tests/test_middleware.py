@@ -177,20 +177,20 @@ def test_semantic_cache_uses_provided_vec(tmp_path):
 # ── Monitor ───────────────────────────────────────────────────────────────────
 
 def test_monitor_unknown_field_raises():
-    monitor = Monitor(FakeMonitorStore(), embed)
+    monitor = Monitor(embed, FakeMonitorStore())
     with pytest.raises(ValueError, match="Unknown fields"):
         monitor.log("query", latency_ms=10.0, user_id="abc")
 
 
 def test_monitor_wrong_type_raises():
-    monitor = Monitor(FakeMonitorStore({"user_id": str}), embed)
+    monitor = Monitor(embed, FakeMonitorStore({"user_id": str}))
     with pytest.raises(TypeError, match="user_id"):
         monitor.log("query", latency_ms=10.0, user_id=123)
 
 
 def test_monitor_logs_with_valid_kwargs():
     store = FakeMonitorStore({"user_id": str})
-    monitor = Monitor(store, embed)
+    monitor = Monitor(embed, store)
     monitor.log("reset my password", latency_ms=10.0, user_id="abc")
     assert store.logged[0]["user_id"] == "abc"
 
@@ -209,7 +209,7 @@ def test_monitor_provided_vec_skips_embed():
         return embed(text)
 
     store = FakeMonitorStore()
-    monitor = Monitor(store, counting_embed)
+    monitor = Monitor(counting_embed, store)
     monitor.log("query", latency_ms=10.0, vec=[1.0, 0.0, 0.0])
     assert len(calls) == 0
 
@@ -251,7 +251,7 @@ def test_middleware_cache_hit_skips_fn(tmp_path):
 
 def test_middleware_monitor_kwargs():
     store = FakeMonitorStore({"user_id": str})
-    monitor = Monitor(store, embed)
+    monitor = Monitor(embed, store)
     mw = Middleware(monitor=monitor, embedder=embed)
 
     @mw.track
@@ -268,14 +268,14 @@ def test_middleware_no_monitor_no_executor():
 
 
 def test_middleware_shutdown_no_error():
-    mw = Middleware(monitor=Monitor(FakeMonitorStore(), embed))
+    mw = Middleware(monitor=Monitor(embed, FakeMonitorStore()))
     mw.shutdown()
 
 
 # ── track_with_handle ─────────────────────────────────────────────────────────
 
 def test_track_with_handle_returns_handle(tmp_path):
-    monitor = Monitor(SQLiteMonitorStore(str(tmp_path / "m.db")), embed)
+    monitor = Monitor(embed, SQLiteMonitorStore(str(tmp_path / "m.db")))
     mw = Middleware(monitor=monitor, embedder=embed)
 
     @mw.track_with_handle
@@ -291,7 +291,7 @@ def test_track_with_handle_returns_handle(tmp_path):
 
 
 def test_track_with_handle_event_id_none_for_clusterstore(tmp_path):
-    monitor = Monitor(SQLiteClusterStore(str(tmp_path / "c.db")), embed)
+    monitor = Monitor(embed, SQLiteClusterStore(str(tmp_path / "c.db")))
     mw = Middleware(monitor=monitor, embedder=embed)
 
     @mw.track_with_handle
@@ -311,7 +311,7 @@ def test_track_with_handle_requires_monitor():
 
 
 def test_track_with_handle_requires_embedder(tmp_path):
-    monitor = Monitor(SQLiteMonitorStore(str(tmp_path / "m.db")), embed)
+    monitor = Monitor(embed, SQLiteMonitorStore(str(tmp_path / "m.db")))
     mw = Middleware(monitor=monitor)  # no embedder
     with pytest.raises(ValueError, match="requires an embedder"):
         mw.track_with_handle(lambda q: q)
@@ -320,7 +320,7 @@ def test_track_with_handle_requires_embedder(tmp_path):
 def test_track_with_handle_cache_hit(tmp_path):
     cache = SemanticCache(SQLiteCacheStore(str(tmp_path / "cache.db")), embed, threshold=0.9)
     cache.set("reset my password", "Cached response.")
-    monitor = Monitor(SQLiteMonitorStore(str(tmp_path / "m.db")), embed)
+    monitor = Monitor(embed, SQLiteMonitorStore(str(tmp_path / "m.db")))
     mw = Middleware(monitor=monitor, cache=cache, embedder=embed)
 
     called = []
@@ -342,8 +342,8 @@ def test_track_with_handle_cache_hit(tmp_path):
 def _make_monitor_with_event_feedback(tmp_path, db="m.db"):
     path = str(tmp_path / db)
     return Monitor(
-        SQLiteMonitorStore(path),
         embed,
+        SQLiteMonitorStore(path),
         feedback_store=SQLiteEventFeedbackStore(path),
     )
 
@@ -351,8 +351,8 @@ def _make_monitor_with_event_feedback(tmp_path, db="m.db"):
 def _make_monitor_with_cluster_feedback(tmp_path, db="c.db"):
     path = str(tmp_path / db)
     return Monitor(
-        SQLiteClusterStore(path),
         embed,
+        SQLiteClusterStore(path),
         feedback_store=SQLiteClusterFeedbackStore(path),
     )
 
@@ -365,14 +365,14 @@ def test_record_feedback_requires_signal(tmp_path):
 
 
 def test_record_feedback_without_feedback_store_raises(tmp_path):
-    monitor = Monitor(SQLiteMonitorStore(str(tmp_path / "m.db")), embed)  # no feedback_store
+    monitor = Monitor(embed, SQLiteMonitorStore(str(tmp_path / "m.db")))  # no feedback_store
     handle = RetrievalHandle(answer="x", cluster_id="c1", event_id="e1")
     with pytest.raises(ValueError, match="requires a feedback_store"):
         monitor.record_feedback(handle, accepted=True)
 
 
 def test_acceptance_rate_without_feedback_store_raises(tmp_path):
-    monitor = Monitor(SQLiteMonitorStore(str(tmp_path / "m.db")), embed)
+    monitor = Monitor(embed, SQLiteMonitorStore(str(tmp_path / "m.db")))
     with pytest.raises(ValueError, match="requires a feedback_store"):
         monitor.acceptance_rate_per_cluster()
 
@@ -519,6 +519,46 @@ def test_monitor_store_migration_idempotent(tmp_path):
     SQLiteMonitorStore(path)
 
 
+# ── min_count filter on get_clusters / popular_queries ───────────────────────
+
+def test_get_clusters_min_count_monitor_store(tmp_path):
+    store = SQLiteMonitorStore(str(tmp_path / "m.db"))
+    # one query in cluster A, three in cluster B
+    store.log("reset my password", vec=[1.0, 0.0, 0.0], latency_ms=10.0, threshold=0.9)
+    for _ in range(3):
+        store.log("activate account", vec=[0.0, 1.0, 0.0], latency_ms=10.0, threshold=0.9)
+
+    all_clusters = store.get_clusters()
+    assert len(all_clusters) == 2
+
+    popular = store.get_clusters(min_count=2)
+    assert len(popular) == 1
+    assert popular[0].count == 3
+    assert popular[0].representative_query == "activate account"
+
+
+def test_get_clusters_min_count_cluster_store(tmp_path):
+    store = SQLiteClusterStore(str(tmp_path / "c.db"))
+    store.log("reset my password", vec=[1.0, 0.0, 0.0], latency_ms=10.0, threshold=0.9)
+    for _ in range(3):
+        store.log("activate account", vec=[0.0, 1.0, 0.0], latency_ms=10.0, threshold=0.9)
+
+    popular = store.get_clusters(min_count=2)
+    assert len(popular) == 1
+    assert popular[0].count == 3
+
+
+def test_popular_queries_min_count_passthrough(tmp_path):
+    monitor = Monitor(embed, SQLiteMonitorStore(str(tmp_path / "m.db")))
+    monitor.log("reset my password", latency_ms=10.0)
+    for _ in range(3):
+        monitor.log("activate account", latency_ms=10.0)
+
+    popular = monitor.popular_queries(min_count=2)
+    assert len(popular) == 1
+    assert popular[0].count == 3
+
+
 # ── Custom stores without assign_cluster ──────────────────────────────────────
 
 class MinimalCustomStore(MonitorStore):
@@ -533,7 +573,7 @@ class MinimalCustomStore(MonitorStore):
 
 def test_minimal_custom_store_works_with_track():
     """Stores without assign_cluster still work with @mw.track."""
-    monitor = Monitor(MinimalCustomStore(), embed)
+    monitor = Monitor(embed, MinimalCustomStore())
     mw = Middleware(monitor=monitor, embedder=embed)
 
     @mw.track
@@ -544,9 +584,18 @@ def test_minimal_custom_store_works_with_track():
     mw.shutdown()
 
 
+def test_monitor_defaults_to_sqlite_store(tmp_path, monkeypatch):
+    """Monitor(embedder=embed) creates a default SQLiteMonitorStore if no store is passed."""
+    monkeypatch.chdir(tmp_path)
+    monitor = Monitor(embed)
+    assert monitor.store is not None
+    # The default store should support clustering
+    monitor.log("hello world", latency_ms=5.0)
+
+
 def test_minimal_custom_store_track_with_handle_raises():
     """track_with_handle raises a clear error when the store doesn't implement assign_cluster."""
-    monitor = Monitor(MinimalCustomStore(), embed)
+    monitor = Monitor(embed, MinimalCustomStore())
     mw = Middleware(monitor=monitor, embedder=embed)
 
     @mw.track_with_handle

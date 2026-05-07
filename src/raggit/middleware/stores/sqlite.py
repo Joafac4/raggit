@@ -229,6 +229,7 @@ class SQLiteMonitorStore(MonitorStore):
         top: Optional[int] = None,
         since: Optional[datetime] = None,
         last_seen_before: Optional[datetime] = None,
+        min_count: Optional[int] = None,
     ) -> List[Cluster]:
         sql = """SELECT cluster_id, representative_vec, representative_query,
                         count, created_at, last_seen
@@ -240,6 +241,9 @@ class SQLiteMonitorStore(MonitorStore):
         if last_seen_before is not None:
             sql += " AND last_seen <= ?"
             params.append(last_seen_before.isoformat())
+        if min_count is not None:
+            sql += " AND count >= ?"
+            params.append(min_count)
         sql += " ORDER BY count DESC"
         if top is not None:
             sql += " LIMIT ?"
@@ -305,6 +309,7 @@ class SQLiteClusterStore(MonitorStore):
         top: Optional[int] = None,
         since: Optional[datetime] = None,
         last_seen_before: Optional[datetime] = None,
+        min_count: Optional[int] = None,
     ) -> List[Cluster]:
         sql = """SELECT cluster_id, representative_vec, representative_query,
                         count, created_at, last_seen
@@ -316,6 +321,9 @@ class SQLiteClusterStore(MonitorStore):
         if last_seen_before is not None:
             sql += " AND last_seen <= ?"
             params.append(last_seen_before.isoformat())
+        if min_count is not None:
+            sql += " AND count >= ?"
+            params.append(min_count)
         sql += " ORDER BY count DESC"
         if top is not None:
             sql += " LIMIT ?"

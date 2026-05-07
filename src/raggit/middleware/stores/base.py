@@ -83,6 +83,7 @@ class MonitorStore(ABC):
         top: Optional[int] = None,
         since: Optional[datetime] = None,
         last_seen_before: Optional[datetime] = None,
+        min_count: Optional[int] = None,
     ) -> List[Cluster]:
         raise NotImplementedError(f"{type(self).__name__} does not support get_clusters()")
 

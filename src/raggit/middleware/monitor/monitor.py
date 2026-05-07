@@ -14,11 +14,16 @@ _BUILTIN_FIELDS = frozenset({"retrieval_score", "retrieved_doc_ids"})
 class Monitor:
     def __init__(
         self,
-        store: MonitorStore,
         embedder: Callable[[str], List[float]],
+        store: Optional[MonitorStore] = None,
         cluster_threshold: float = 0.92,
         feedback_store: Optional[FeedbackStore] = None,
     ):
+        if store is None:
+            # Lazy import: don't pull sqlite into the module namespace for users
+            # who pass their own store.
+            from ..stores.sqlite import SQLiteMonitorStore
+            store = SQLiteMonitorStore()
         self.store = store
         self.embedder = embedder
         self.cluster_threshold = cluster_threshold
@@ -90,8 +95,14 @@ class Monitor:
         top: Optional[int] = None,
         since: Optional[datetime] = None,
         last_seen_before: Optional[datetime] = None,
+        min_count: Optional[int] = None,
     ) -> List[Cluster]:
-        return self.store.get_clusters(top=top, since=since, last_seen_before=last_seen_before)
+        return self.store.get_clusters(
+            top=top,
+            since=since,
+            last_seen_before=last_seen_before,
+            min_count=min_count,
+        )
 
     def events(
         self,
@@ -154,5 +165,5 @@ class Monitor:
             raise ValueError(
                 f"Monitor.{op}() requires a feedback_store. "
                 f"Pass one when constructing Monitor:\n"
-                f"    Monitor(store=..., embedder=..., feedback_store=SQLiteEventFeedbackStore('...'))"
+                f"    Monitor(embedder=..., store=..., feedback_store=SQLiteEventFeedbackStore('...'))"
             )

@@ -200,11 +200,21 @@ EvalSuite().add("custom", my_eval).run()
 The monitor wraps your retrieval function and clusters similar queries so you can see what production traffic actually looks like.
 
 ```python
+from raggit.middleware import Middleware, Monitor
+
+# Zero-config: defaults to SQLiteMonitorStore(".raggit/middleware.db")
+monitor = Monitor(embedder=embed)
+middleware = Middleware(monitor=monitor, embedder=embed)
+```
+
+Or pass a store explicitly when you want to control the path or threshold:
+
+```python
 from raggit.middleware import Middleware, Monitor, SQLiteMonitorStore
 
 monitor = Monitor(
-    store=SQLiteMonitorStore(".raggit/monitor.db"),
     embedder=embed,
+    store=SQLiteMonitorStore(".raggit/monitor.db"),
     cluster_threshold=0.92,
 )
 middleware = Middleware(monitor=monitor, embedder=embed)
@@ -222,7 +232,9 @@ result = retrieve("my query", _monitor_kwargs={
 
 # Inspect what's popular
 monitor.stats()
-monitor.popular_queries(top=10)
+monitor.popular_queries(top=10)                 # top-N by count
+monitor.popular_queries(min_count=5)            # everything seen ≥5 times
+monitor.popular_queries(top=10, min_count=5)    # top-10 of those seen ≥5 times
 ```
 
 ### Store types
