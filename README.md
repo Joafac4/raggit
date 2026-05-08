@@ -384,6 +384,82 @@ def feedback(req: FeedbackReq):
 
 ---
 
+## Automatic cache promotion
+
+Once a cluster has enough volume *and* enough positive signal, the answer
+gets promoted into the semantic cache automatically. Future similar queries
+are served from cache without re-running your retrieval. If quality later
+drops, the cache entry is evicted.
+
+```python
+from raggit.middleware import (
+    AutoCachePromoter, Middleware, Monitor, SemanticCache,
+    SQLiteCacheStore, SQLiteEventFeedbackStore, SQLiteMonitorStore,
+)
+
+db = ".raggit/middleware.db"
+cache = SemanticCache(SQLiteCacheStore(db), embedder=embed, threshold=0.95)
+store = SQLiteMonitorStore(db)
+feedback_store = SQLiteEventFeedbackStore(db)
+
+promoter = AutoCachePromoter(
+    cache=cache,
+    store=store,
+    feedback_store=feedback_store,
+    min_count=10,           # at least 10 events in the cluster
+    min_acceptance=0.8,     # ≥80% thumb-up rate (set to None to ignore)
+    min_score=None,         # average score floor (set to a value to gate)
+)
+
+monitor = Monitor(
+    embedder=embed, store=store, feedback_store=feedback_store,
+    auto_promoter=promoter,        # monitor calls promoter on feedback
+)
+mw = Middleware(
+    monitor=monitor, cache=cache, embedder=embed,
+    auto_promoter=promoter,        # middleware calls promoter on answer
+)
+
+@mw.track_with_handle
+def retrieve(query: str) -> str:
+    return my_index.search(query)[0]
+```
+
+After enough events + feedback meeting the thresholds, `cache.get(query)`
+starts returning the auto-promoted answer transparently — your retrieval
+function isn't called.
+
+### Trigger semantics
+
+All thresholds are AND. `None` means "ignore this dimension":
+
+```python
+# Pure popularity — 20 events, no quality gate.
+AutoCachePromoter(cache, store, fb, min_count=20, min_acceptance=None)
+
+# Default — 10 events AND 80%+ thumb-up rate.
+AutoCachePromoter(cache, store, fb, min_count=10, min_acceptance=0.8)
+
+# Rating-only UIs (no thumb data) — gate on score.
+AutoCachePromoter(cache, store, fb, min_count=5, min_acceptance=None, min_score=0.8)
+```
+
+### Demotion
+
+If a cluster's quality drops below the threshold (e.g. acceptance falls
+below 80%), the auto-promoted entry is automatically removed from the
+cache. Manually-set entries (`cache.set(...)`) are never auto-evicted —
+only entries promoted by `AutoCachePromoter` are eligible for demotion.
+
+### Privacy
+
+When an `AutoCachePromoter` is wired in, response text is persisted in the
+`clusters.latest_response` column (the candidate for promotion). Without a
+promoter, that column stays NULL — no response text is stored. If your data
+is sensitive, don't wire the promoter.
+
+---
+
 ## Metrics
 
 **`Metrics`** — similarity metrics, passed as `metric=` to `embedding_eval`:
@@ -469,6 +545,7 @@ src/raggit/
 - [x] `monitor.popular_queries()` — surface popular query clusters from production
 - [ ] Suite history & diff — persist `SuiteReport`s and diff across runs (e.g. model A vs model B over time)
 - [x] Feedback integration — `track_with_handle` + `record_feedback` + acceptance/score per-cluster reads
+- [x] Automatic cache promotion — `AutoCachePromoter` promotes & demotes based on count + acceptance + score thresholds
 - [ ] CI/CD integration
 
 ---

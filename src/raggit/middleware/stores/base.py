@@ -87,6 +87,24 @@ class MonitorStore(ABC):
     ) -> List[Cluster]:
         raise NotImplementedError(f"{type(self).__name__} does not support get_clusters()")
 
+    def get_cluster(self, cluster_id: str) -> Optional[Cluster]:
+        """Fetch a single cluster by id. Returns None if not found.
+
+        Used by AutoCachePromoter to evaluate eligibility for one cluster
+        without paying for a full get_clusters() scan.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support get_cluster()")
+
+    def update_latest_response(self, cluster_id: str, response: str) -> None:
+        """Persist the latest answer produced for this cluster, overwriting
+        any previous one. Used by AutoCachePromoter as the candidate
+        response that gets promoted to cache when thresholds are met.
+        Default: NotImplementedError. Stores must opt in.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support update_latest_response()"
+        )
+
     def stats(self) -> Dict:
         raise NotImplementedError(f"{type(self).__name__} does not support stats()")
 
@@ -119,6 +137,24 @@ class FeedbackStore(ABC):
         before this is called.
         """
         ...
+
+    def get_feedback_summary(self, cluster_id: str) -> Optional[Dict]:
+        """Return per-cluster feedback aggregates for one cluster, or None
+        if the cluster has no feedback at all. Shape:
+            {
+                "feedback_count": int,
+                "accepted_count": int,
+                "acceptance_rate": Optional[float],  # None if no thumb feedback
+                "score_count": int,
+                "avg_score": Optional[float],         # None if no score feedback
+            }
+
+        Used by AutoCachePromoter to evaluate eligibility for one cluster
+        without paying for an aggregate-over-all-clusters query.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support get_feedback_summary()"
+        )
 
     def acceptance_rate_per_cluster(
         self,
@@ -159,6 +195,31 @@ class CacheStore(ABC):
         vec: List[float],
         response: str,
         approved_by: str = "llm",
+        cluster_id: Optional[str] = None,
     ) -> None:
-        """Store cached response for vec."""
+        """Store cached response for vec.
+
+        If `cluster_id` is provided and an entry with the same cluster_id and
+        approved_by='auto' already exists, the call is idempotent (no insert,
+        no error). This protects AutoCachePromoter from double-promotion under
+        concurrent feedback events.
+        """
         ...
+
+    def delete_by_cluster(self, cluster_id: str) -> None:
+        """Delete cache entries with this cluster_id and approved_by='auto'.
+        Human-set entries are never deleted by this. Used by AutoCachePromoter
+        for demotion. Default raises NotImplementedError.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support delete_by_cluster()"
+        )
+
+    def has_auto_entry(self, cluster_id: str) -> bool:
+        """True iff an auto-promoted cache entry exists for this cluster_id.
+        Used by AutoCachePromoter to decide whether to promote/demote/skip.
+        Default raises NotImplementedError.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support has_auto_entry()"
+        )

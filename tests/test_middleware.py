@@ -4,6 +4,7 @@ from typing import Dict, List
 import pytest
 
 from raggit.middleware import (
+    AutoCachePromoter,
     Middleware,
     Monitor,
     MonitorStore,
@@ -604,3 +605,243 @@ def test_minimal_custom_store_track_with_handle_raises():
 
     with pytest.raises(NotImplementedError, match="assign_cluster"):
         retrieve("anything")
+
+
+# ── AutoCachePromoter ─────────────────────────────────────────────────────────
+
+def _make_full_stack(tmp_path, **promoter_kwargs):
+    """Wires monitor + cache + feedback + auto-promoter on a single sqlite file."""
+    db = str(tmp_path / "stack.db")
+    cache = SemanticCache(SQLiteCacheStore(db), embed, threshold=0.9)
+    store = SQLiteMonitorStore(db)
+    fb = SQLiteEventFeedbackStore(db)
+    promoter = AutoCachePromoter(cache, store, fb, **promoter_kwargs)
+    monitor = Monitor(embed, store=store, feedback_store=fb, auto_promoter=promoter)
+    mw = Middleware(monitor=monitor, cache=cache, embedder=embed, auto_promoter=promoter)
+    return mw, monitor, cache, promoter
+
+
+def test_promoter_count_only_promotes(tmp_path):
+    mw, monitor, cache, promoter = _make_full_stack(tmp_path, min_count=3, min_acceptance=None)
+
+    @mw.track_with_handle
+    def retrieve(query):
+        return "the answer"
+
+    handle = None
+    for _ in range(3):
+        handle = retrieve("reset my password")
+    mw.shutdown()  # flush async on_answer
+
+    assert cache.has_auto_entry(handle.cluster_id)
+    assert cache.get("reset my password") == "the answer"
+
+
+def test_promoter_count_alone_not_enough_when_quality_gated(tmp_path):
+    mw, monitor, cache, promoter = _make_full_stack(
+        tmp_path, min_count=2, min_acceptance=0.8
+    )
+
+    @mw.track_with_handle
+    def retrieve(query):
+        return "answer"
+
+    handle = retrieve("reset my password")
+    retrieve("reset my password")
+    mw.shutdown()
+
+    # count met but no feedback → not eligible
+    assert not cache.has_auto_entry(handle.cluster_id)
+
+
+def test_promoter_promotes_after_positive_feedback(tmp_path):
+    mw, monitor, cache, promoter = _make_full_stack(
+        tmp_path, min_count=2, min_acceptance=0.8
+    )
+
+    @mw.track_with_handle
+    def retrieve(query):
+        return "answer"
+
+    h1 = retrieve("reset my password")
+    h2 = retrieve("reset my password")
+    mw.shutdown()
+
+    assert not cache.has_auto_entry(h1.cluster_id)
+    monitor.record_feedback(h1, accepted=True)
+    monitor.record_feedback(h2, accepted=True)
+    assert cache.has_auto_entry(h1.cluster_id)
+    assert cache.get("reset my password") == "answer"
+
+
+def test_promoter_demotes_when_acceptance_drops(tmp_path):
+    mw, monitor, cache, promoter = _make_full_stack(
+        tmp_path, min_count=2, min_acceptance=0.8
+    )
+
+    @mw.track_with_handle
+    def retrieve(query):
+        return "answer"
+
+    h1 = retrieve("reset my password")
+    h2 = retrieve("reset my password")
+    h3 = retrieve("reset my password")
+    h4 = retrieve("reset my password")
+    mw.shutdown()
+
+    monitor.record_feedback(h1, accepted=True)
+    monitor.record_feedback(h2, accepted=True)
+    assert cache.has_auto_entry(h1.cluster_id)
+
+    # rate falls below 0.8 → demote
+    monitor.record_feedback(h3, accepted=False)
+    monitor.record_feedback(h4, accepted=False)
+    assert not cache.has_auto_entry(h1.cluster_id)
+
+
+def test_promoter_does_not_touch_human_entries(tmp_path):
+    mw, monitor, cache, promoter = _make_full_stack(tmp_path, min_count=2, min_acceptance=None)
+
+    @mw.track_with_handle
+    def retrieve(query):
+        return "auto answer"
+
+    h = retrieve("reset my password")
+    cache.set("reset my password", "human answer", approved_by="human")
+    retrieve("reset my password")
+    mw.shutdown()
+
+    # human entry survives a "demotion" call
+    cache.delete_auto(h.cluster_id)
+    # the human entry should still be retrievable
+    assert cache.get("reset my password") == "human answer"
+
+
+def test_promoter_idempotent_on_repeated_eligibility(tmp_path):
+    mw, monitor, cache, promoter = _make_full_stack(
+        tmp_path, min_count=2, min_acceptance=None
+    )
+
+    @mw.track_with_handle
+    def retrieve(query):
+        return "answer"
+
+    h = None
+    for _ in range(5):
+        h = retrieve("reset my password")
+    mw.shutdown()
+
+    # auto entry exists exactly once even after many eligibility-met events
+    with __import__("sqlite3").connect(str(tmp_path / "stack.db")) as conn:
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM cache WHERE cluster_id = ? AND approved_by = 'auto'",
+            (h.cluster_id,),
+        ).fetchone()
+    assert rows[0] == 1
+
+
+def test_promoter_score_gate(tmp_path):
+    mw, monitor, cache, promoter = _make_full_stack(
+        tmp_path, min_count=2, min_acceptance=None, min_score=0.7
+    )
+
+    @mw.track_with_handle
+    def retrieve(query):
+        return "answer"
+
+    h1 = retrieve("reset my password")
+    h2 = retrieve("reset my password")
+    mw.shutdown()
+
+    # Below threshold → no promotion
+    monitor.record_feedback(h1, score=0.5)
+    monitor.record_feedback(h2, score=0.5)
+    assert not cache.has_auto_entry(h1.cluster_id)
+
+    # Now above threshold → promotion
+    monitor.record_feedback(h1, score=0.9)
+    monitor.record_feedback(h2, score=0.9)
+    # avg now (0.5+0.5+0.9+0.9)/4 = 0.7 (boundary). Make it cleanly > 0.7:
+    monitor.record_feedback(h2, score=0.95)
+    assert cache.has_auto_entry(h1.cluster_id)
+
+
+def test_promoter_works_with_cluster_pairing(tmp_path):
+    db = str(tmp_path / "c.db")
+    cache = SemanticCache(SQLiteCacheStore(db), embed, threshold=0.9)
+    store = SQLiteClusterStore(db)
+    fb = SQLiteClusterFeedbackStore(db)
+    promoter = AutoCachePromoter(cache, store, fb, min_count=2, min_acceptance=0.8)
+    monitor = Monitor(embed, store=store, feedback_store=fb, auto_promoter=promoter)
+    mw = Middleware(monitor=monitor, cache=cache, embedder=embed, auto_promoter=promoter)
+
+    @mw.track_with_handle
+    def retrieve(query):
+        return "cluster answer"
+
+    h1 = retrieve("reset my password")
+    h2 = retrieve("reset my password")
+    mw.shutdown()
+
+    # ClusterStore: event_id is None, but feedback works at cluster level
+    assert h1.event_id is None
+    monitor.record_feedback(h1, accepted=True)
+    monitor.record_feedback(h2, accepted=True)
+    assert cache.has_auto_entry(h1.cluster_id)
+
+
+def test_latest_response_stays_null_without_promoter(tmp_path):
+    """Wiring no promoter means no response-text persistence."""
+    monitor = Monitor(embed, SQLiteMonitorStore(str(tmp_path / "m.db")))
+    mw = Middleware(monitor=monitor, embedder=embed)
+
+    @mw.track_with_handle
+    def retrieve(query):
+        return "secret answer"
+
+    h = retrieve("reset my password")
+    mw.shutdown()
+
+    cluster = monitor.store.get_cluster(h.cluster_id)
+    assert cluster is not None
+    assert cluster.latest_response is None  # never written without promoter
+
+
+def test_get_feedback_summary_event_store(tmp_path):
+    monitor = _make_monitor_with_event_feedback(tmp_path)
+    mw = Middleware(monitor=monitor, embedder=embed)
+
+    @mw.track_with_handle
+    def retrieve(query):
+        return "answer"
+
+    h = retrieve("reset my password")
+    mw.shutdown()
+    assert monitor.feedback_store.get_feedback_summary(h.cluster_id) is None
+
+    monitor.record_feedback(h, accepted=True, score=0.8)
+    summary = monitor.feedback_store.get_feedback_summary(h.cluster_id)
+    assert summary["feedback_count"] == 1
+    assert summary["accepted_count"] == 1
+    assert summary["acceptance_rate"] == 1.0
+    assert abs(summary["avg_score"] - 0.8) < 1e-9
+
+
+def test_get_feedback_summary_cluster_store(tmp_path):
+    monitor = _make_monitor_with_cluster_feedback(tmp_path)
+    mw = Middleware(monitor=monitor, embedder=embed)
+
+    @mw.track_with_handle
+    def retrieve(query):
+        return "answer"
+
+    h = retrieve("reset my password")
+    mw.shutdown()
+    assert monitor.feedback_store.get_feedback_summary(h.cluster_id) is None
+
+    monitor.record_feedback(h, accepted=True, score=0.8)
+    summary = monitor.feedback_store.get_feedback_summary(h.cluster_id)
+    assert summary["feedback_count"] == 1
+    assert summary["accepted_count"] == 1
+    assert summary["acceptance_rate"] == 1.0
+    assert abs(summary["avg_score"] - 0.8) < 1e-9

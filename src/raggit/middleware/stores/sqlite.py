@@ -32,9 +32,14 @@ _CLUSTERS_DDL = """
         representative_query TEXT NOT NULL,
         count INTEGER DEFAULT 0,
         created_at TEXT NOT NULL,
-        last_seen TEXT NOT NULL
+        last_seen TEXT NOT NULL,
+        latest_response TEXT
     )
 """
+
+_CLUSTERS_SELECT = """SELECT cluster_id, representative_vec, representative_query,
+                            count, created_at, last_seen, latest_response
+                     FROM clusters"""
 
 _EVENTS_DDL = """
     CREATE TABLE IF NOT EXISTS events (
@@ -58,7 +63,11 @@ def _ensure_dir(path: str) -> None:
 
 
 def _row_to_cluster(row) -> Cluster:
+    """Accept rows of length 6 (no latest_response) or 7+ (latest_response in
+    position 6). Existing feedback read paths slice the cluster prefix to 6
+    columns; new paths SELECT all 7. Both work."""
     cluster_id, rep_vec, rep_query, count, created_at, last_seen = row[:6]
+    latest_response = row[6] if len(row) > 6 else None
     return Cluster(
         cluster_id=cluster_id,
         representative_vec=json.loads(rep_vec),
@@ -66,6 +75,7 @@ def _row_to_cluster(row) -> Cluster:
         count=count,
         created_at=datetime.fromisoformat(created_at),
         last_seen=datetime.fromisoformat(last_seen),
+        latest_response=latest_response,
     )
 
 
@@ -123,6 +133,14 @@ def _column_exists(conn, table: str, column: str) -> bool:
     return any(row[1] == column for row in rows)
 
 
+def _ensure_clusters_schema(conn) -> None:
+    """Idempotent: create clusters table if missing, add latest_response
+    column on existing DBs that pre-date auto-cache promotion."""
+    conn.execute(_CLUSTERS_DDL)
+    if not _column_exists(conn, "clusters", "latest_response"):
+        conn.execute("ALTER TABLE clusters ADD COLUMN latest_response TEXT")
+
+
 # ── MonitorStore implementations ──────────────────────────────────────────────
 
 class SQLiteMonitorStore(MonitorStore):
@@ -144,7 +162,7 @@ class SQLiteMonitorStore(MonitorStore):
         self.path = path
         _ensure_dir(path)
         with sqlite3.connect(self.path) as conn:
-            conn.execute(_CLUSTERS_DDL)
+            _ensure_clusters_schema(conn)
             conn.execute(_EVENTS_DDL)
 
     def get_schema(self) -> Dict[str, type]:
@@ -231,9 +249,7 @@ class SQLiteMonitorStore(MonitorStore):
         last_seen_before: Optional[datetime] = None,
         min_count: Optional[int] = None,
     ) -> List[Cluster]:
-        sql = """SELECT cluster_id, representative_vec, representative_query,
-                        count, created_at, last_seen
-                 FROM clusters WHERE 1=1"""
+        sql = _CLUSTERS_SELECT + " WHERE 1=1"
         params: list = []
         if since is not None:
             sql += " AND created_at >= ?"
@@ -251,6 +267,20 @@ class SQLiteMonitorStore(MonitorStore):
         with sqlite3.connect(self.path) as conn:
             rows = conn.execute(sql, params).fetchall()
         return [_row_to_cluster(row) for row in rows]
+
+    def get_cluster(self, cluster_id: str) -> Optional[Cluster]:
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(
+                _CLUSTERS_SELECT + " WHERE cluster_id = ?", (cluster_id,)
+            ).fetchone()
+        return _row_to_cluster(row) if row else None
+
+    def update_latest_response(self, cluster_id: str, response: str) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                "UPDATE clusters SET latest_response = ? WHERE cluster_id = ?",
+                (response, cluster_id),
+            )
 
     def stats(self) -> Dict:
         with sqlite3.connect(self.path) as conn:
@@ -277,7 +307,7 @@ class SQLiteClusterStore(MonitorStore):
         self.path = path
         _ensure_dir(path)
         with sqlite3.connect(self.path) as conn:
-            conn.execute(_CLUSTERS_DDL)
+            _ensure_clusters_schema(conn)
 
     def get_schema(self) -> Dict[str, type]:
         return {}
@@ -311,9 +341,7 @@ class SQLiteClusterStore(MonitorStore):
         last_seen_before: Optional[datetime] = None,
         min_count: Optional[int] = None,
     ) -> List[Cluster]:
-        sql = """SELECT cluster_id, representative_vec, representative_query,
-                        count, created_at, last_seen
-                 FROM clusters WHERE 1=1"""
+        sql = _CLUSTERS_SELECT + " WHERE 1=1"
         params: list = []
         if since is not None:
             sql += " AND created_at >= ?"
@@ -331,6 +359,20 @@ class SQLiteClusterStore(MonitorStore):
         with sqlite3.connect(self.path) as conn:
             rows = conn.execute(sql, params).fetchall()
         return [_row_to_cluster(row) for row in rows]
+
+    def get_cluster(self, cluster_id: str) -> Optional[Cluster]:
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(
+                _CLUSTERS_SELECT + " WHERE cluster_id = ?", (cluster_id,)
+            ).fetchone()
+        return _row_to_cluster(row) if row else None
+
+    def update_latest_response(self, cluster_id: str, response: str) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                "UPDATE clusters SET latest_response = ? WHERE cluster_id = ?",
+                (response, cluster_id),
+            )
 
     def stats(self) -> Dict:
         with sqlite3.connect(self.path) as conn:
@@ -359,7 +401,7 @@ class SQLiteEventFeedbackStore(FeedbackStore):
         _ensure_dir(path)
         with sqlite3.connect(self.path) as conn:
             # Ensure paired tables exist (no-op if SQLiteMonitorStore got there first).
-            conn.execute(_CLUSTERS_DDL)
+            _ensure_clusters_schema(conn)
             conn.execute(_EVENTS_DDL)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS feedback (
@@ -401,6 +443,35 @@ class SQLiteEventFeedbackStore(FeedbackStore):
                     datetime.now().isoformat(),
                 ),
             )
+
+    def get_feedback_summary(self, cluster_id: str) -> Optional[Dict]:
+        sql = """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN f.accepted IS NOT NULL THEN 1 ELSE 0 END) AS thumb_total,
+                SUM(CASE WHEN f.accepted = 1 THEN 1 ELSE 0 END)         AS accepted,
+                SUM(CASE WHEN f.score    IS NOT NULL THEN 1 ELSE 0 END) AS score_count,
+                SUM(COALESCE(f.score, 0))                                AS score_sum
+            FROM feedback f
+            JOIN events e ON e.event_id = f.event_id
+            WHERE e.cluster_id = ?
+        """
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(sql, (cluster_id,)).fetchone()
+        if row is None or (row[0] or 0) == 0:
+            return None
+        total, thumb_total, accepted, score_count, score_sum = row
+        thumb_total = thumb_total or 0
+        accepted = accepted or 0
+        score_count = score_count or 0
+        score_sum = score_sum or 0.0
+        return {
+            "feedback_count": thumb_total,
+            "accepted_count": accepted,
+            "acceptance_rate": (accepted / thumb_total) if thumb_total > 0 else None,
+            "score_count": score_count,
+            "avg_score": (score_sum / score_count) if score_count > 0 else None,
+        }
 
     def acceptance_rate_per_cluster(
         self,
@@ -471,7 +542,7 @@ class SQLiteClusterFeedbackStore(FeedbackStore):
         self.path = path
         _ensure_dir(path)
         with sqlite3.connect(self.path) as conn:
-            conn.execute(_CLUSTERS_DDL)
+            _ensure_clusters_schema(conn)
             for col, decl in self._FEEDBACK_COLUMNS.items():
                 if not _column_exists(conn, "clusters", col):
                     conn.execute(f"ALTER TABLE clusters ADD COLUMN {col} {decl}")
@@ -503,6 +574,26 @@ class SQLiteClusterFeedbackStore(FeedbackStore):
                     handle.cluster_id,
                 ),
             )
+
+    def get_feedback_summary(self, cluster_id: str) -> Optional[Dict]:
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(
+                """SELECT accepted_count, feedback_count, score_sum, score_count
+                   FROM clusters WHERE cluster_id = ?""",
+                (cluster_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        accepted_count, feedback_count, score_sum, score_count = row
+        if (feedback_count or 0) == 0 and (score_count or 0) == 0:
+            return None
+        return {
+            "feedback_count": feedback_count or 0,
+            "accepted_count": accepted_count or 0,
+            "acceptance_rate": (accepted_count / feedback_count) if feedback_count else None,
+            "score_count":    score_count or 0,
+            "avg_score":      (score_sum / score_count) if score_count else None,
+        }
 
     def acceptance_rate_per_cluster(
         self,
@@ -542,7 +633,12 @@ class SQLiteClusterFeedbackStore(FeedbackStore):
 class SQLiteCacheStore(CacheStore):
     """
     SQLite CacheStore — fully independent from MonitorStore.
-    Table: cache (vec + response together). If query matches above threshold, return response.
+    Table: cache (vec + response together). If query matches above threshold,
+    return response.
+
+    The optional `cluster_id` column is set by AutoCachePromoter for
+    auto-promoted entries; NULL for human-set entries. Indexed for O(log n)
+    demotion lookups by cluster.
     """
 
     def __init__(self, path: str = ".raggit/middleware.db"):
@@ -555,9 +651,15 @@ class SQLiteCacheStore(CacheStore):
                     vec TEXT NOT NULL,
                     response TEXT NOT NULL,
                     approved_by TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    cluster_id TEXT
                 )
             """)
+            if not _column_exists(conn, "cache", "cluster_id"):
+                conn.execute("ALTER TABLE cache ADD COLUMN cluster_id TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cache_cluster_id ON cache(cluster_id)"
+            )
 
     def get(self, vec: List[float], threshold: float) -> Optional[str]:
         with sqlite3.connect(self.path) as conn:
@@ -576,9 +678,49 @@ class SQLiteCacheStore(CacheStore):
             ).fetchone()
         return row[0] if row else None
 
-    def set(self, vec: List[float], response: str, approved_by: str = "llm") -> None:
+    def set(
+        self,
+        vec: List[float],
+        response: str,
+        approved_by: str = "llm",
+        cluster_id: Optional[str] = None,
+    ) -> None:
+        # Idempotency: skip if (cluster_id, approved_by='auto') already present.
+        if cluster_id is not None and approved_by == "auto":
+            with sqlite3.connect(self.path) as conn:
+                exists = conn.execute(
+                    "SELECT 1 FROM cache WHERE cluster_id = ? AND approved_by = 'auto' LIMIT 1",
+                    (cluster_id,),
+                ).fetchone()
+            if exists is not None:
+                return
+
         with sqlite3.connect(self.path) as conn:
             conn.execute(
-                "INSERT INTO cache (cache_id, vec, response, approved_by, created_at) VALUES (?, ?, ?, ?, ?)",
-                (str(uuid.uuid4()), json.dumps(vec), response, approved_by, datetime.now().isoformat()),
+                """INSERT INTO cache
+                    (cache_id, vec, response, approved_by, created_at, cluster_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    str(uuid.uuid4()),
+                    json.dumps(vec),
+                    response,
+                    approved_by,
+                    datetime.now().isoformat(),
+                    cluster_id,
+                ),
             )
+
+    def delete_by_cluster(self, cluster_id: str) -> None:
+        with sqlite3.connect(self.path) as conn:
+            conn.execute(
+                "DELETE FROM cache WHERE cluster_id = ? AND approved_by = 'auto'",
+                (cluster_id,),
+            )
+
+    def has_auto_entry(self, cluster_id: str) -> bool:
+        with sqlite3.connect(self.path) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM cache WHERE cluster_id = ? AND approved_by = 'auto' LIMIT 1",
+                (cluster_id,),
+            ).fetchone()
+        return row is not None

@@ -1,3 +1,4 @@
+from .cache.auto_promoter import AutoCachePromoter
 from .cache.cache import SemanticCache
 from .middleware import Middleware
 from .models import Cluster, Event, RetrievalHandle
@@ -12,6 +13,7 @@ from .stores.sqlite import (
 )
 
 __all__ = [
+    "AutoCachePromoter",
     "CacheStore",
     "Cluster",
     "Event",

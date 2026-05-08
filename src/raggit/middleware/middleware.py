@@ -4,11 +4,14 @@ import functools
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from .cache.cache import SemanticCache
 from .models import RetrievalHandle
 from .monitor.monitor import Monitor
+
+if TYPE_CHECKING:
+    from .cache.auto_promoter import AutoCachePromoter
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +23,12 @@ class Middleware:
         cache: Optional[SemanticCache] = None,
         embedder: Optional[Callable] = None,
         monitor_workers: int = 2,
+        auto_promoter: Optional["AutoCachePromoter"] = None,
     ):
         self.monitor = monitor
         self.cache = cache
         self.embedder = embedder
+        self.auto_promoter = auto_promoter
         self._executor = ThreadPoolExecutor(max_workers=monitor_workers) if monitor else None
 
     def track(self, fn: Callable) -> Callable:
@@ -104,6 +109,8 @@ class Middleware:
         start = time.time()
         answer = fn(query, *args, **kwargs)
 
+        handle = RetrievalHandle(answer=answer, cluster_id=cluster_id, event_id=event_id)
+
         self._log_monitor(
             query,
             latency_ms=Monitor.calculate_timing(start),
@@ -112,7 +119,15 @@ class Middleware:
             event_id=event_id,
             **monitor_kwargs,
         )
-        return RetrievalHandle(answer=answer, cluster_id=cluster_id, event_id=event_id)
+        if self.auto_promoter is not None:
+            self._executor.submit(self._safe_on_answer, handle, answer)
+        return handle
+
+    def _safe_on_answer(self, handle: RetrievalHandle, response) -> None:
+        try:
+            self.auto_promoter.on_answer(handle, response)
+        except Exception:
+            logger.exception("AutoCachePromoter.on_answer failed for cluster %r", handle.cluster_id)
 
     def _log_monitor(self, query: str, **kwargs) -> None:
         if self.monitor is None:

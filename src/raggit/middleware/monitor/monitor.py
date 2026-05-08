@@ -3,10 +3,13 @@ from __future__ import annotations
 import time
 import uuid
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 from ..models import Cluster, RetrievalHandle
 from ..stores.base import FeedbackStore, MonitorStore
+
+if TYPE_CHECKING:
+    from ..cache.auto_promoter import AutoCachePromoter
 
 _BUILTIN_FIELDS = frozenset({"retrieval_score", "retrieved_doc_ids"})
 
@@ -18,6 +21,7 @@ class Monitor:
         store: Optional[MonitorStore] = None,
         cluster_threshold: float = 0.92,
         feedback_store: Optional[FeedbackStore] = None,
+        auto_promoter: Optional["AutoCachePromoter"] = None,
     ):
         if store is None:
             # Lazy import: don't pull sqlite into the module namespace for users
@@ -28,6 +32,7 @@ class Monitor:
         self.embedder = embedder
         self.cluster_threshold = cluster_threshold
         self.feedback_store = feedback_store
+        self.auto_promoter = auto_promoter
         self._schema: Dict[str, type] = store.get_schema()
 
     def log(
@@ -145,6 +150,8 @@ class Monitor:
         self.feedback_store.record_feedback(
             handle, accepted=accepted, score=score, comment=comment
         )
+        if self.auto_promoter is not None:
+            self.auto_promoter.on_feedback(handle)
 
     def acceptance_rate_per_cluster(
         self,
