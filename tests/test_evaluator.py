@@ -1,5 +1,12 @@
-from raggit import EvalSuite, Metrics, RetrievalMetrics, chunk_eval, embedding_eval, evaluate, index_eval
-
+from raggit import (
+    EvalSuite,
+    Metrics,
+    RetrievalMetrics,
+    chunk_eval,
+    embedding_eval,
+    evaluate,
+    index_eval,
+)
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 

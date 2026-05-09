@@ -34,7 +34,6 @@ if POSTGRES_DSN is not None:
         PostgresClusterStore,
         PostgresEventFeedbackStore,
         PostgresMonitorStore,
-        RetrievalHandle,
         SemanticCache,
     )
 
@@ -76,7 +75,9 @@ def test_paired_stores_idempotent_init():
     a = PostgresMonitorStore(POSTGRES_DSN, dim=DIM)
     b = PostgresEventFeedbackStore(POSTGRES_DSN, dim=DIM)
     c = PostgresMonitorStore(POSTGRES_DSN, dim=DIM)  # re-init should be no-op
-    a.close(); b.close(); c.close()
+    a.close()
+    b.close()
+    c.close()
 
 
 # ── End-to-end: monitor + feedback + auto-cache ──────────────────────────────
@@ -106,7 +107,9 @@ def test_full_loop_pgvector():
     assert cache.has_auto_entry(h1.cluster_id)
     assert cache.get("reset my password") == "the answer"
 
-    store.close(); fb.close(); cache.store.close()
+    store.close()
+    fb.close()
+    cache.store.close()
 
 
 def test_cluster_store_pairing_pgvector():
@@ -121,7 +124,8 @@ def test_cluster_store_pairing_pgvector():
     assert len(clusters) == 1
     assert clusters[0].count == 2
 
-    store.close(); fb.close()
+    store.close()
+    fb.close()
 
 
 # ── min_count filter ─────────────────────────────────────────────────────────

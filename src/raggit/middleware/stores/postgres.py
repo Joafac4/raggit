@@ -23,8 +23,8 @@ from .base import CacheStore, FeedbackStore, MonitorStore
 
 try:
     import psycopg
-    from psycopg_pool import ConnectionPool
     from pgvector.psycopg import register_vector
+    from psycopg_pool import ConnectionPool
     _POSTGRES_AVAILABLE = True
 except ImportError:
     _POSTGRES_AVAILABLE = False

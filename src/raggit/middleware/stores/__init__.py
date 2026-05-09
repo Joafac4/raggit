@@ -1,6 +1,31 @@
-from .base import CacheStore, MonitorStore
-from .sqlite import SQLiteCacheStore, SQLiteClusterStore, SQLiteMonitorStore
+from .base import CacheStore, FeedbackStore, MonitorStore
+from .postgres import (
+    PostgresCacheStore,
+    PostgresClusterFeedbackStore,
+    PostgresClusterStore,
+    PostgresEventFeedbackStore,
+    PostgresMonitorStore,
+)
+from .sqlite import (
+    SQLiteCacheStore,
+    SQLiteClusterFeedbackStore,
+    SQLiteClusterStore,
+    SQLiteEventFeedbackStore,
+    SQLiteMonitorStore,
+)
 
-# Future stores (not in MVP):
-# - PostgresStore: user creates tables manually, schema documented in docs
-# - HTTPStore: connects to Raggit Cloud SaaS API
+__all__ = [
+    "CacheStore",
+    "FeedbackStore",
+    "MonitorStore",
+    "PostgresCacheStore",
+    "PostgresClusterFeedbackStore",
+    "PostgresClusterStore",
+    "PostgresEventFeedbackStore",
+    "PostgresMonitorStore",
+    "SQLiteCacheStore",
+    "SQLiteClusterFeedbackStore",
+    "SQLiteClusterStore",
+    "SQLiteEventFeedbackStore",
+    "SQLiteMonitorStore",
+]

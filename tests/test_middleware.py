@@ -17,7 +17,6 @@ from raggit.middleware import (
     SQLiteMonitorStore,
 )
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def embed(text: str) -> List[float]:

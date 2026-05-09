@@ -15,7 +15,6 @@ from sentence_transformers import SentenceTransformer
 from raggit import EvalSuite, Metrics, RetrievalMetrics, embedding_eval
 from raggit.middleware import Middleware, Monitor, SQLiteMonitorStore
 
-
 # ── Tiny corpus ─────────────────────────────────────────────────────────────
 
 corpus = [
