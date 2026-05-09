@@ -1,6 +1,6 @@
 [project]
 name = "raggit"
-version = "0.7.0"
+version = "0.8.0"
 description = "Version control for your RAG pipeline — compare embedding models on your own data"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -10,6 +10,13 @@ dependencies = [
     "numpy",
     "pydantic",
     "rich",
+]
+
+[project.optional-dependencies]
+postgres = [
+    "psycopg[binary]>=3.1",
+    "psycopg_pool>=3.2",
+    "pgvector>=0.3",
 ]
 
 [build-system]

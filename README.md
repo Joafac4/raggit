@@ -241,9 +241,64 @@ monitor.popular_queries(top=10, min_count=5)    # top-10 of those seen ≥5 time
 
 | Store | Use when |
 |---|---|
-| `SQLiteMonitorStore` | Full per-query history (events + clusters) |
-| `SQLiteClusterStore` | Aggregate counts only, no per-query history |
-| `SQLiteCacheStore` | Semantic cache |
+| `SQLiteMonitorStore` | Full per-query history (events + clusters). Default. |
+| `SQLiteClusterStore` | Aggregate counts only, no per-query history. |
+| `SQLiteCacheStore` | Semantic cache (SQLite). |
+| `PostgresMonitorStore` | Production. Postgres + pgvector, HNSW-indexed VECTOR column, O(log n) similarity search. |
+| `PostgresClusterStore` | Postgres aggregate-only flavor. |
+| `PostgresCacheStore` | Postgres-backed semantic cache. |
+
+### Postgres / pgvector backend
+
+SQLite uses an in-memory linear scan to find similar clusters — fine for
+hobby projects, but O(n) over the full clusters table at scale. For
+production, use the Postgres backend. It stores vectors in a
+[pgvector](https://github.com/pgvector/pgvector) column with an HNSW index,
+giving O(log n) approximate nearest neighbor search.
+
+```bash
+pip install raggit[postgres]
+```
+
+```python
+from raggit.middleware import (
+    Middleware, Monitor,
+    PostgresMonitorStore, PostgresEventFeedbackStore, PostgresCacheStore,
+    SemanticCache, AutoCachePromoter,
+)
+
+dsn = "postgresql://user:pass@host:5432/raggit"
+DIM = 1536  # match your embedder's output dimension
+
+store          = PostgresMonitorStore(dsn, dim=DIM)
+feedback_store = PostgresEventFeedbackStore(dsn, dim=DIM)
+cache          = SemanticCache(PostgresCacheStore(dsn, dim=DIM), embedder=embed, threshold=0.95)
+promoter       = AutoCachePromoter(cache, store, feedback_store, min_count=10, min_acceptance=0.8)
+
+monitor = Monitor(embed, store=store, feedback_store=feedback_store, auto_promoter=promoter)
+mw      = Middleware(monitor=monitor, cache=cache, embedder=embed, auto_promoter=promoter)
+
+@mw.track_with_handle
+def retrieve(query: str) -> str:
+    return my_index.search(query)[0]
+```
+
+**Setup notes:**
+
+- `pgvector` extension must be available on the database. Most managed
+  Postgres services (RDS, Cloud SQL, Supabase, Neon, Railway) provide it;
+  on self-hosted Postgres you may need to install it. The store calls
+  `CREATE EXTENSION IF NOT EXISTS vector` on init — if that fails with a
+  permission error, run it once as the database owner.
+- `dim` is required at construction time so the column type is `VECTOR(dim)`
+  and the HNSW index can be built. Roadmap: derive `dim` automatically from
+  the embedder's first output.
+- Each store opens its own internal connection pool (`min_size=1`,
+  `max_size=5` by default). Long-running apps can call `store.close()` on
+  shutdown to release connections cleanly.
+- All `Postgres*` stores follow the same paired-stores pattern as the
+  SQLite ones — `Postgres{Cluster,Monitor}Store` pair with
+  `Postgres{Cluster,Event}FeedbackStore`.
 
 ### Semantic cache
 
@@ -546,6 +601,8 @@ src/raggit/
 - [ ] Suite history & diff — persist `SuiteReport`s and diff across runs (e.g. model A vs model B over time)
 - [x] Feedback integration — `track_with_handle` + `record_feedback` + acceptance/score per-cluster reads
 - [x] Automatic cache promotion — `AutoCachePromoter` promotes & demotes based on count + acceptance + score thresholds
+- [x] Postgres + pgvector backend — production-grade O(log n) ANN via `pip install raggit[postgres]`
+- [ ] Auto-derive embedder dimension for the Postgres backend (currently `dim` is required explicitly)
 - [ ] CI/CD integration
 
 ---
